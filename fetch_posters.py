@@ -230,10 +230,87 @@ def upload_poster(item):
     print(f"Added: {item['title']}", flush=True)
 
 
-def update_poster_meta(item):
+def dedupe(items):
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def fetch_credits(media, tmdb_id, cast_count=4):
+    """Director/writer(s)/producer(s)/composer/cast, for the Framed
+    appearance's billing block. Movie and TV credits payloads shape crew
+    differently - a movie crew entry has one flat 'job' string, a TV
+    (aggregate_credits) entry has a 'jobs' list per person - so they're
+    mapped separately. Any role TMDb has nothing for is simply left out of
+    the returned dict; the billing block skips lines it has no data for."""
+    if not TMDB_API_KEY:
+        return {}
+    try:
+        if media == "movie":
+            resp = requests.get(
+                f"{TMDB_BASE}/movie/{tmdb_id}/credits",
+                params={"api_key": TMDB_API_KEY}, timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            crew = data.get("crew", [])
+            director = next((c["name"] for c in crew if c.get("job") == "Director"), None)
+            writers = [c["name"] for c in crew if c.get("job") in ("Screenplay", "Writer", "Story")]
+            producers = [c["name"] for c in crew if c.get("job") == "Producer"]
+            composer = next((c["name"] for c in crew if c.get("job") == "Original Music Composer"), None)
+            cast = [c["name"] for c in sorted(data.get("cast", []), key=lambda c: c.get("order", 999))]
+        else:
+            # aggregate_credits covers the whole series, not just the latest
+            # season - a plain /tv/{id}/credits call would silently drift to
+            # whichever season TMDb currently considers "current".
+            resp = requests.get(
+                f"{TMDB_BASE}/tv/{tmdb_id}/aggregate_credits",
+                params={"api_key": TMDB_API_KEY}, timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            crew = data.get("crew", [])
+
+            def has_job(person, *jobs):
+                return any(j.get("job") in jobs for j in person.get("jobs", []))
+
+            director = next((c["name"] for c in crew if has_job(c, "Director")), None)
+            writers = [c["name"] for c in crew if has_job(c, "Writer", "Story")]
+            producers = [c["name"] for c in crew if has_job(c, "Executive Producer", "Producer")]
+            composer = next((c["name"] for c in crew if has_job(c, "Original Music Composer")), None)
+            cast = [
+                c["name"] for c in sorted(
+                    data.get("cast", []), key=lambda c: -(c.get("total_episode_count") or 0)
+                )
+            ]
+    except requests.RequestException:
+        return {}
+
+    credits = {}
+    if director:
+        credits["director"] = director
+    if writers:
+        credits["writers"] = dedupe(writers)[:3]
+    if producers:
+        credits["producers"] = dedupe(producers)[:3]
+    if composer:
+        credits["composer"] = composer
+    if cast:
+        credits["cast"] = dedupe(cast)[:cast_count]
+    return credits
+
+
+def update_poster_meta(item, credits=None):
+    payload = {"release_date": item["release_date"], "title": item["title"]}
+    if credits:
+        payload["credits"] = credits
     resp = requests.post(
         f"{APP_BASE}/poster-meta/{item['filename']}",
-        json={"release_date": item["release_date"], "title": item["title"]},
+        json=payload,
         timeout=15,
     )
     resp.raise_for_status()
@@ -349,7 +426,10 @@ def main():
                 continue
 
         try:
-            update_poster_meta(item)
+            media, _, tmdb_id = key.partition(":")
+            cast_count = config.get("appearances", {}).get("framed", {}).get("cast_count", 4)
+            credits = fetch_credits(media, tmdb_id, cast_count)
+            update_poster_meta(item, credits)
         except requests.RequestException as e:
             print(f"Failed to update metadata for {item['title']}: {e}", flush=True)
 

@@ -301,80 +301,171 @@
           </div>
 
           <div class="field-group">
-            <label for="poster_position" class="field-label">Poster position</label>
-            <select id="poster_position" name="poster_position" form="settingsForm">
-              <option value="top" {{ 'selected' if poster_position == 'top' else '' }}>Top</option>
-              <option value="center" {{ 'selected' if poster_position == 'center' else '' }}>Center</option>
-              <option value="bottom" {{ 'selected' if poster_position == 'bottom' else '' }}>Bottom</option>
-            </select>
+            <label class="field-label">Appearance</label>
+            <label style="display:inline-flex;align-items:center;gap:6px;margin-right:16px;">
+              <input type="radio" name="active_appearance" value="classic" form="settingsForm"
+                     {{ 'checked' if active_appearance != 'framed' else '' }} onchange="syncAppearance()">
+              Classic
+            </label>
+            <label style="display:inline-flex;align-items:center;gap:6px;">
+              <input type="radio" name="active_appearance" value="framed" form="settingsForm"
+                     {{ 'checked' if active_appearance == 'framed' else '' }} onchange="syncAppearance()">
+              Framed
+            </label>
           </div>
 
-          <div class="field-group">
-            <label for="top_band_content" class="field-label">Top label content</label>
-            <select id="top_band_content" name="top_band_content" form="settingsForm"
-                    onchange="document.getElementById('topCustomWrap').style.display=this.value==='custom'?'block':'none'">
-              <option value="none" {{ 'selected' if top_band_content == 'none' else '' }}>None</option>
-              <option value="status" {{ 'selected' if top_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
-              <option value="date" {{ 'selected' if top_band_content == 'date' else '' }}>Release date</option>
-              <option value="custom" {{ 'selected' if top_band_content == 'custom' else '' }}>Custom text</option>
-            </select>
-            <div id="topCustomWrap" style="{{ '' if top_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
-              <input type="text" name="top_custom_text" value="{{ top_custom_text }}" placeholder="Text for the top band" maxlength="60" form="settingsForm">
+          <div id="classicAppearance">
+            <div class="field-group">
+              <label for="classic_poster_position" class="field-label">Poster position</label>
+              <select id="classic_poster_position" name="classic_poster_position" form="settingsForm">
+                <option value="top" {{ 'selected' if classic_poster_position == 'top' else '' }}>Top</option>
+                <option value="center" {{ 'selected' if classic_poster_position == 'center' else '' }}>Center</option>
+                <option value="bottom" {{ 'selected' if classic_poster_position == 'bottom' else '' }}>Bottom</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="classic_top_band_content" class="field-label">Top label content</label>
+              <select id="classic_top_band_content" name="classic_top_band_content" form="settingsForm"
+                      onchange="document.getElementById('classicTopCustomWrap').style.display=this.value==='custom'?'block':'none'">
+                <option value="none" {{ 'selected' if classic_top_band_content == 'none' else '' }}>None</option>
+                <option value="status" {{ 'selected' if classic_top_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="date" {{ 'selected' if classic_top_band_content == 'date' else '' }}>Release date</option>
+                <option value="custom" {{ 'selected' if classic_top_band_content == 'custom' else '' }}>Custom text</option>
+              </select>
+              <div id="classicTopCustomWrap" style="{{ '' if classic_top_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
+                <input type="text" name="classic_top_custom_text" value="{{ classic_top_custom_text }}" placeholder="Text for the top band" maxlength="60" form="settingsForm">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="classic_bottom_band_content" class="field-label">Bottom label content</label>
+              <select id="classic_bottom_band_content" name="classic_bottom_band_content" form="settingsForm"
+                      onchange="document.getElementById('classicBottomCustomWrap').style.display=this.value==='custom'?'block':'none'">
+                <option value="none" {{ 'selected' if classic_bottom_band_content == 'none' else '' }}>None</option>
+                <option value="status" {{ 'selected' if classic_bottom_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="date" {{ 'selected' if classic_bottom_band_content == 'date' else '' }}>Release date</option>
+                <option value="custom" {{ 'selected' if classic_bottom_band_content == 'custom' else '' }}>Custom text</option>
+              </select>
+              <div id="classicBottomCustomWrap" style="{{ '' if classic_bottom_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
+                <input type="text" name="classic_bottom_custom_text" value="{{ classic_bottom_custom_text }}" placeholder="Text for the bottom band" maxlength="60" form="settingsForm">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <div class="field-label"><span>Text size</span><span class="val" id="classicTextSizeVal">{{ classic_text_size_pct }}%</span></div>
+              <input type="range" name="classic_text_size_pct" min="50" max="200" step="5" value="{{ classic_text_size_pct }}" form="settingsForm"
+                     oninput="document.getElementById('classicTextSizeVal').textContent=this.value+'%'">
+            </div>
+
+            <div class="field-group">
+              <label for="classic_text_color" class="field-label">Text colour</label>
+              <div class="color-row">
+                <input type="color" id="classic_text_color" name="classic_text_color" value="{{ classic_text_color }}" form="settingsForm"
+                       oninput="document.getElementById('classic_text_color_hex').value=this.value">
+                <input type="text" id="classic_text_color_hex" class="hex-input" value="{{ classic_text_color }}" maxlength="7"
+                       oninput="document.getElementById('classic_text_color').value=this.value">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="classic_band_background_color" class="field-label">Background colour</label>
+              <div class="color-row">
+                <input type="color" id="classic_band_background_color" name="classic_band_background_color" value="{{ classic_band_bg_color }}" form="settingsForm"
+                       oninput="document.getElementById('classic_band_bg_hex').value=this.value">
+                <input type="text" id="classic_band_bg_hex" class="hex-input" value="{{ classic_band_bg_color }}" maxlength="7"
+                       oninput="document.getElementById('classic_band_background_color').value=this.value">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="classic_display_font_family" class="field-label">Display font (Google Fonts name)</label>
+              <input type="text" id="classic_display_font_family" name="classic_display_font_family" value="{{ classic_display_font_family }}" placeholder="e.g. Oswald - blank for default" form="settingsForm">
+              {% if classic_display_font_status == 'ok' %}
+              <div class="font-status ok">Using {{ classic_display_font_family }}</div>
+              {% elif classic_display_font_status == 'not_found' %}
+              <div class="font-status error">Couldn't find "{{ classic_display_font_family }}" on Google Fonts - check the spelling</div>
+              {% elif classic_display_font_status == 'rate_limited' %}
+              <div class="font-status error">Rate-limited fetching fonts - try again in about an hour</div>
+              {% elif classic_display_font_status == 'error' %}
+              <div class="font-status error">Couldn't reach the font server - try again shortly</div>
+              {% endif %}
             </div>
           </div>
 
-          <div class="field-group">
-            <label for="bottom_band_content" class="field-label">Bottom label content</label>
-            <select id="bottom_band_content" name="bottom_band_content" form="settingsForm"
-                    onchange="document.getElementById('bottomCustomWrap').style.display=this.value==='custom'?'block':'none'">
-              <option value="none" {{ 'selected' if bottom_band_content == 'none' else '' }}>None</option>
-              <option value="status" {{ 'selected' if bottom_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
-              <option value="date" {{ 'selected' if bottom_band_content == 'date' else '' }}>Release date</option>
-              <option value="custom" {{ 'selected' if bottom_band_content == 'custom' else '' }}>Custom text</option>
-            </select>
-            <div id="bottomCustomWrap" style="{{ '' if bottom_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
-              <input type="text" name="bottom_custom_text" value="{{ bottom_custom_text }}" placeholder="Text for the bottom band" maxlength="60" form="settingsForm">
+          <div id="framedAppearance" style="display:none;">
+            <p class="note" style="margin:0 0 14px;">Poster scaled down and inset, with a status line above it and a
+              full cast/crew billing block below it, set in the same typeface real theatrical posters use.</p>
+
+            <div class="field-group">
+              <label for="framed_poster_position" class="field-label">Poster position</label>
+              <select id="framed_poster_position" name="framed_poster_position" form="settingsForm">
+                <option value="top" {{ 'selected' if framed_poster_position == 'top' else '' }}>Top</option>
+                <option value="center" {{ 'selected' if framed_poster_position == 'center' else '' }}>Center</option>
+                <option value="bottom" {{ 'selected' if framed_poster_position == 'bottom' else '' }}>Bottom</option>
+              </select>
             </div>
-          </div>
 
-          <div class="field-group">
-            <div class="field-label"><span>Text size</span><span class="val" id="textSizeVal">{{ text_size_pct }}%</span></div>
-            <input type="range" name="text_size_pct" min="50" max="200" step="5" value="{{ text_size_pct }}" form="settingsForm"
-                   oninput="document.getElementById('textSizeVal').textContent=this.value+'%'">
-          </div>
-
-          <div class="field-group">
-            <label for="text_color" class="field-label">Text colour</label>
-            <div class="color-row">
-              <input type="color" id="text_color" name="text_color" value="{{ text_color }}" form="settingsForm"
-                     oninput="document.getElementById('text_color_hex').value=this.value">
-              <input type="text" id="text_color_hex" class="hex-input" value="{{ text_color }}" maxlength="7"
-                     oninput="document.getElementById('text_color').value=this.value">
+            <div class="field-group">
+              <div class="field-label"><span>Poster scale</span><span class="val" id="framedScaleVal">{{ framed_poster_scale_pct }}%</span></div>
+              <input type="range" name="framed_poster_scale_pct" min="50" max="95" step="1" value="{{ framed_poster_scale_pct }}" form="settingsForm"
+                     oninput="document.getElementById('framedScaleVal').textContent=this.value+'%'">
             </div>
-          </div>
 
-          <div class="field-group">
-            <label for="band_background_color" class="field-label">Background colour</label>
-            <div class="color-row">
-              <input type="color" id="band_background_color" name="band_background_color" value="{{ band_bg_color }}" form="settingsForm"
-                     oninput="document.getElementById('band_bg_hex').value=this.value">
-              <input type="text" id="band_bg_hex" class="hex-input" value="{{ band_bg_color }}" maxlength="7"
-                     oninput="document.getElementById('band_background_color').value=this.value">
+            <div class="field-group">
+              <label for="framed_top_content" class="field-label">Status line content</label>
+              <select id="framed_top_content" name="framed_top_content" form="settingsForm"
+                      onchange="document.getElementById('framedTopCustomWrap').style.display=this.value==='custom'?'block':'none'">
+                <option value="none" {{ 'selected' if framed_top_content == 'none' else '' }}>None</option>
+                <option value="status" {{ 'selected' if framed_top_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="date" {{ 'selected' if framed_top_content == 'date' else '' }}>Release date</option>
+                <option value="custom" {{ 'selected' if framed_top_content == 'custom' else '' }}>Custom text</option>
+              </select>
+              <div id="framedTopCustomWrap" style="{{ '' if framed_top_content == 'custom' else 'display:none;' }}margin-top:10px;">
+                <input type="text" name="framed_top_custom_text" value="{{ framed_top_custom_text }}" placeholder="Text above the poster" maxlength="60" form="settingsForm">
+              </div>
             </div>
-          </div>
 
-          <div class="field-group">
-            <label for="display_font_family" class="field-label">Display font (Google Fonts name)</label>
-            <input type="text" id="display_font_family" name="display_font_family" value="{{ display_font_family }}" placeholder="e.g. Oswald - blank for default" form="settingsForm">
-            {% if display_font_status == 'ok' %}
-            <div class="font-status ok">Using {{ display_font_family }}</div>
-            {% elif display_font_status == 'not_found' %}
-            <div class="font-status error">Couldn't find "{{ display_font_family }}" on Google Fonts - check the spelling</div>
-            {% elif display_font_status == 'rate_limited' %}
-            <div class="font-status error">Rate-limited fetching fonts - try again in about an hour</div>
-            {% elif display_font_status == 'error' %}
-            <div class="font-status error">Couldn't reach the font server - try again shortly</div>
-            {% endif %}
+            <div class="field-group">
+              <label for="framed_cast_count" class="field-label">Cast members to list</label>
+              <input type="number" id="framed_cast_count" name="framed_cast_count" min="0" max="10" value="{{ framed_cast_count }}" form="settingsForm">
+            </div>
+
+            <div class="field-group">
+              <label for="framed_text_color" class="field-label">Text colour</label>
+              <div class="color-row">
+                <input type="color" id="framed_text_color" name="framed_text_color" value="{{ framed_text_color }}" form="settingsForm"
+                       oninput="document.getElementById('framed_text_color_hex').value=this.value">
+                <input type="text" id="framed_text_color_hex" class="hex-input" value="{{ framed_text_color }}" maxlength="7"
+                       oninput="document.getElementById('framed_text_color').value=this.value">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="framed_background_color" class="field-label">Background colour</label>
+              <div class="color-row">
+                <input type="color" id="framed_background_color" name="framed_background_color" value="{{ framed_background_color }}" form="settingsForm"
+                       oninput="document.getElementById('framed_bg_hex').value=this.value">
+                <input type="text" id="framed_bg_hex" class="hex-input" value="{{ framed_background_color }}" maxlength="7"
+                       oninput="document.getElementById('framed_background_color').value=this.value">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="framed_top_font_family" class="field-label">Status line font (Google Fonts name)</label>
+              <input type="text" id="framed_top_font_family" name="framed_top_font_family" value="{{ framed_top_font_family }}" placeholder="e.g. Oswald - blank for default" form="settingsForm">
+              {% if framed_top_font_status == 'ok' %}
+              <div class="font-status ok">Using {{ framed_top_font_family }}</div>
+              {% elif framed_top_font_status == 'not_found' %}
+              <div class="font-status error">Couldn't find "{{ framed_top_font_family }}" on Google Fonts - check the spelling</div>
+              {% elif framed_top_font_status == 'rate_limited' %}
+              <div class="font-status error">Rate-limited fetching fonts - try again in about an hour</div>
+              {% elif framed_top_font_status == 'error' %}
+              <div class="font-status error">Couldn't reach the font server - try again shortly</div>
+              {% endif %}
+              <p class="note" style="margin:6px 0 0;">The billing block below the poster always uses the same
+                fixed typeface real posters use - only this status line is customizable.</p>
+            </div>
           </div>
         </section>
       </div>
@@ -728,9 +819,9 @@
           <div class="field-group">
             <label for="plex_band" class="field-label">"Now Playing" label position</label>
             <select id="plex_band" name="plex_band" form="settingsForm">
-              <option value="top" {{ 'selected' if plex_band == 'top' else '' }}>Top band</option>
-              <option value="bottom" {{ 'selected' if plex_band == 'bottom' else '' }}>Bottom band</option>
-              <option value="none" {{ 'selected' if plex_band == 'none' else '' }}>None (poster only)</option>
+              <option value="top" {{ 'selected' if classic_plex_band == 'top' else '' }}>Top band</option>
+              <option value="bottom" {{ 'selected' if classic_plex_band == 'bottom' else '' }}>Bottom band</option>
+              <option value="none" {{ 'selected' if classic_plex_band == 'none' else '' }}>None (poster only)</option>
             </select>
             <p class="note" style="margin-top:8px;margin-bottom:0;">
               Forces this band to say "NOW PLAYING" while active. The other
@@ -854,6 +945,20 @@
     if(t) t.style.display = chosen.value === 'tv' ? 'block' : 'none';
   }
   syncMediaMode();
+
+  // --- Display appearance -------------------------------------------------
+  // Same non-disabled hidden-block trick as media mode above - the inactive
+  // appearance's fields still submit and stay saved under their own prefixed
+  // names, so switching back restores exactly what was there before.
+  function syncAppearance(){
+    const chosen = document.querySelector('input[name="active_appearance"]:checked');
+    if(!chosen) return;
+    const c = document.getElementById('classicAppearance');
+    const f = document.getElementById('framedAppearance');
+    if(c) c.style.display = chosen.value === 'framed' ? 'none' : 'block';
+    if(f) f.style.display = chosen.value === 'framed' ? 'block' : 'none';
+  }
+  syncAppearance();
 
   // --- Unified save -----------------------------------------------------
   const settingsForm = document.getElementById('settingsForm');
@@ -1061,6 +1166,19 @@
   }
 
   let updateHadDisconnect = false;
+  // update.sh's own process can be reaped (pgrep stops matching it) a beat
+  // before the old web server's socket actually closes - systemd delivers
+  // the cgroup-wide kill to both at once, but how fast each one actually
+  // dies differs. A poll landing in that gap sees a normal HTTP response
+  // with running:false, which used to be treated as "it died with no
+  // result" and stopped polling right before the real disconnect/reconnect
+  // (the actual completion signal) would have arrived. Instead of trusting
+  // a single such observation, note when it started and keep polling fast
+  // for a short grace window - almost always the disconnect shows up within
+  // a second or two; only if it genuinely never does is this a real stall.
+  let notRunningSince = null;
+  const NOT_RUNNING_GRACE_MS = 6000;
+  const NOT_RUNNING_POLL_MS = 350;
 
   function pollUpdateProgress(){
     fetch('/update/log').then(r=>r.json()).then(data=>{
@@ -1069,6 +1187,7 @@
         // actual "restart finished" signal, more reliable than guessing
         // how long a restart takes. Now the fixed countdown makes sense.
         updateHadDisconnect = false;
+        notRunningSince = null;
         updatePageStatus.textContent = 'Reconnected';
         updateDeviceStatus.textContent = 'Update complete';
         setBarPct(100);
@@ -1094,8 +1213,18 @@
       }
 
       if(!data.running && !(stage && stage.terminal)){
-        // Process ended but never reached a recognized "done" marker -
-        // show whatever it last said rather than pretending to know more.
+        if(notRunningSince === null) notRunningSince = Date.now();
+
+        if(Date.now() - notRunningSince < NOT_RUNNING_GRACE_MS){
+          // Ambiguous for now - poll again quickly rather than waiting out
+          // the normal interval, so a genuine disconnect (the common case)
+          // gets caught almost immediately instead of sitting here.
+          setTimeout(pollUpdateProgress, NOT_RUNNING_POLL_MS);
+          return;
+        }
+
+        // Grace window elapsed with no disconnect and no new log progress -
+        // this really did end without a recognized "done" marker.
         updateDeviceStatus.textContent = 'Update process ended';
         updateFinalNote.style.display = 'block';
         updateFinalNote.className = 'flash err';
@@ -1104,11 +1233,13 @@
         return;
       }
 
+      notRunningSince = null;
       setTimeout(pollUpdateProgress, 1200);
     }).catch(()=>{
       // Expected mid-update: posterframe-web restarting as update.sh's
       // last step drops this exact request. Keep retrying until it's back.
       updateHadDisconnect = true;
+      notRunningSince = null;
       updatePageStatus.textContent = 'Reconnecting…';
       updateDeviceStatus.textContent = 'Restarting services…';
       setBarIndeterminate();
@@ -1176,8 +1307,9 @@
           return;
         }
         plexConnectResult.innerHTML = '<p class="flash ok">Connected as '+escapeHtml(data.username)
-          +(data.server_name ? ' &mdash; '+escapeHtml(data.server_name) : '')+'</p>';
-        setTimeout(()=>window.location.reload(), 1200);
+          +(data.server_name ? ' &mdash; '+escapeHtml(data.server_name) : '')+'</p>'
+          +(data.warning ? '<p class="flash err">'+escapeHtml(data.warning)+'</p>' : '');
+        setTimeout(()=>window.location.reload(), data.warning ? 4000 : 1200);
       }).catch(()=>{
         setTimeout(pollPlexStatus, 2000);
       });

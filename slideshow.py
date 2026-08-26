@@ -25,6 +25,13 @@ ROTATION_MAP = {
 FONT_PATHS_BOLD = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
 FONT_PATHS_MONO = ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"]
 
+# The Framed appearance's billing block always uses this bundled file - not
+# the user-customizable Google Font mechanism display_font/top_font use -
+# since matching the real industry-standard billing block typeface is the
+# entire point of that block.
+BILLING_FONT_PATH = os.path.join(BASE_DIR, "fonts", "univers_39_thin_ultra_condensed.otf")
+_billing_font_cache = {}
+
 os.makedirs(PREPARED_DIR, exist_ok=True)
 
 
@@ -85,6 +92,15 @@ def get_font(font_info, size, bold):
             pass
 
     return load_font(FONT_PATHS_BOLD if bold else FONT_PATHS_MONO, size)
+
+
+def get_billing_font(size):
+    if size not in _billing_font_cache:
+        if os.path.exists(BILLING_FONT_PATH):
+            _billing_font_cache[size] = ImageFont.truetype(BILLING_FONT_PATH, size)
+        else:
+            _billing_font_cache[size] = load_font(FONT_PATHS_MONO, size)
+    return _billing_font_cache[size]
 
 
 def clear_prepared_dir():
@@ -186,18 +202,25 @@ def build_composited_poster(source_path, meta, canvas_w, canvas_h, text_rgb, ban
 
     draw = ImageDraw.Draw(canvas)
     scale_factor = max(0.5, min(2.0, text_size_pct / 100))
-
+    # Sized from canvas_h, not from the band itself - the band is a side
+    # effect of poster aspect ratio and position, not a proxy for how big
+    # the user wants the text. Driving size off the band meant a normal
+    # band's "natural" size already sat at fit_text_font's width ceiling by
+    # ~120% on the slider, leaving 150-200% nowhere to go. Clamping to the
+    # band is still needed so text can't overflow a genuinely tiny one.
     top_text = resolve_band_text(top_content, meta, top_custom_text)
     if top_text and top_band > 12:
         bold = is_bold_content(top_content)
-        base_size = max(14, min(72, int(top_band * 0.5 * scale_factor)))
+        target_size = int(canvas_h * 0.045 * scale_factor)
+        base_size = max(14, min(target_size, int(top_band * 0.9)))
         font = fit_text_font(draw, canvas_w, top_text, font_info, base_size, bold)
         draw_centered_text(draw, canvas_w, top_band // 2, top_text, font, text_rgb)
 
     bottom_text = resolve_band_text(bottom_content, meta, bottom_custom_text)
     if bottom_text and bottom_band > 12:
         bold = is_bold_content(bottom_content)
-        base_size = max(12, min(56, int(bottom_band * 0.4 * scale_factor)))
+        target_size = int(canvas_h * 0.035 * scale_factor)
+        base_size = max(12, min(target_size, int(bottom_band * 0.9)))
         font = fit_text_font(draw, canvas_w, bottom_text, font_info, base_size, bold)
         draw_centered_text(draw, canvas_w, canvas_h - bottom_band // 2, bottom_text, font, text_rgb)
 
@@ -221,6 +244,164 @@ def build_display_list(order, poster_meta, rotation_degrees, brightness, contras
             source_path, meta, display_w, display_h, text_rgb, band_bg_rgb,
             position, top_content, bottom_content, top_custom_text,
             bottom_custom_text, text_size_pct, font_info,
+        )
+
+        transpose_method = ROTATION_MAP.get(rotation_degrees)
+        if transpose_method is not None:
+            canvas = canvas.transpose(transpose_method)
+
+        if brightness != 1.0:
+            canvas = ImageEnhance.Brightness(canvas).enhance(brightness)
+        if contrast != 1.0:
+            canvas = ImageEnhance.Contrast(canvas).enhance(contrast)
+        if saturation != 1.0:
+            canvas = ImageEnhance.Color(canvas).enhance(saturation)
+
+        out_path = os.path.join(PREPARED_DIR, filename)
+        canvas.save(out_path)
+        paths.append(out_path)
+
+    return paths
+
+
+def build_billing_lines(credits, cast_count):
+    """Role/value pairs for the Framed billing block, ordered the same way
+    classic theatrical one-sheets stack them (cast first, director closest
+    to the bottom edge). Any role the source data doesn't have is simply
+    left out - this is the graceful-degradation the full billing block
+    needs, since neither TMDb nor Plex reliably populates every field for
+    every title."""
+    credits = credits or {}
+    lines = []
+    cast = credits.get("cast") or []
+    if cast:
+        lines.append(("STARRING", ", ".join(cast[:cast_count]).upper()))
+    if credits.get("composer"):
+        lines.append(("MUSIC BY", credits["composer"].upper()))
+    if credits.get("producers"):
+        lines.append(("PRODUCED BY", " & ".join(credits["producers"]).upper()))
+    if credits.get("writers"):
+        lines.append(("WRITTEN BY", " & ".join(credits["writers"]).upper()))
+    if credits.get("director"):
+        lines.append(("DIRECTED BY", credits["director"].upper()))
+    return lines
+
+
+def billing_fonts(scale):
+    role_font = get_billing_font(max(10, int(14 * scale)))
+    name_font = get_billing_font(max(12, int(19 * scale)))
+    line_gap = max(2, int(4 * scale))
+    block_gap = max(6, int(10 * scale))
+    return role_font, name_font, line_gap, block_gap
+
+
+def draw_centered_line(draw, canvas_w, y, text, font, fill):
+    """Like draw_centered_text, but for stacking lines top-to-bottom rather
+    than centering one line in a fixed box - returns the line's ink height
+    so the caller can advance y for the next line."""
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    draw.text(((canvas_w - w) // 2, y - bbox[1]), text, font=font, fill=fill)
+    return bbox[3] - bbox[1]
+
+
+def billing_block_height(draw, lines, scale):
+    role_font, name_font, line_gap, block_gap = billing_fonts(scale)
+    total = 0
+    for role, value in lines:
+        role_bbox = draw.textbbox((0, 0), role, font=role_font)
+        value_bbox = draw.textbbox((0, 0), value, font=name_font)
+        total += (role_bbox[3] - role_bbox[1]) + line_gap
+        total += (value_bbox[3] - value_bbox[1]) + block_gap
+    return total
+
+
+def draw_billing_block(draw, canvas_w, top_y, lines, text_rgb, scale):
+    role_font, name_font, line_gap, block_gap = billing_fonts(scale)
+    y = top_y
+    for role, value in lines:
+        y += draw_centered_line(draw, canvas_w, y, role, role_font, text_rgb) + line_gap
+        y += draw_centered_line(draw, canvas_w, y, value, name_font, text_rgb) + block_gap
+    return y
+
+
+def build_framed_poster(source_path, meta, canvas_w, canvas_h, text_rgb, bg_rgb, position,
+                         poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count):
+    """The Framed appearance: poster scaled down and inset (not full-bleed),
+    a small status line above it, and a full cast/crew billing block below
+    it - modeled on classic theatrical one-sheets, unlike build_composited_
+    poster's full-width poster + leftover-space bands."""
+    poster = Image.open(source_path).convert("RGB")
+    poster_w, poster_h = poster.size
+
+    canvas = Image.new("RGB", (canvas_w, canvas_h), bg_rgb)
+    draw = ImageDraw.Draw(canvas)
+    # Billing-block point sizes below were tuned by eye against a 1920px-tall
+    # canvas - scale keeps them proportionally correct at other resolutions.
+    scale = canvas_h / 1920
+
+    credits = (meta or {}).get("credits") if meta else None
+    billing_lines = build_billing_lines(credits, cast_count)
+    billing_margin = int(24 * scale)
+    billing_height = (
+        billing_block_height(draw, billing_lines, scale) + billing_margin * 2
+        if billing_lines else 0
+    )
+
+    top_text = resolve_band_text(top_content, meta, top_custom_text)
+    top_zone_height = int(canvas_h * 0.07) if top_text else int(canvas_h * 0.03)
+
+    # Poster is scaled to a fraction of canvas width, then capped further if
+    # that would overflow the vertical space left after the two text zones.
+    available_h = max(1, canvas_h - top_zone_height - billing_height)
+    target_w = max(1, int(canvas_w * poster_scale_pct / 100))
+    poster_scale = target_w / poster_w
+    scaled_h = round(poster_h * poster_scale)
+    if scaled_h > available_h:
+        poster_scale = available_h / poster_h
+        scaled_h = available_h
+        target_w = round(poster_w * poster_scale)
+    poster_resized = poster.resize((max(1, target_w), max(1, scaled_h)), Image.LANCZOS)
+
+    leftover = available_h - scaled_h
+    if position == "top":
+        poster_y = top_zone_height
+    elif position == "bottom":
+        poster_y = top_zone_height + leftover
+    else:
+        poster_y = top_zone_height + leftover // 2
+    poster_x = (canvas_w - poster_resized.width) // 2
+    canvas.paste(poster_resized, (poster_x, poster_y))
+
+    if top_text:
+        bold = is_bold_content(top_content)
+        base_size = max(14, int(top_zone_height * 0.45))
+        font = fit_text_font(draw, canvas_w, top_text, top_font_info, base_size, bold)
+        draw_centered_text(draw, canvas_w, top_zone_height // 2, top_text, font, text_rgb)
+
+    if billing_lines:
+        draw_billing_block(draw, canvas_w, canvas_h - billing_height + billing_margin,
+                            billing_lines, text_rgb, scale)
+
+    return canvas
+
+
+def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, contrast,
+                               saturation, display_w, display_h, text_rgb, bg_rgb, position,
+                               poster_scale_pct, top_content, top_custom_text, top_font_info,
+                               cast_count):
+    clear_prepared_dir()
+    paths = []
+
+    for filename in order:
+        source_path = os.path.join(POSTER_DIR, filename)
+        if not os.path.exists(source_path):
+            continue
+
+        meta = poster_meta.get(filename)
+        canvas = build_framed_poster(
+            source_path, meta, display_w, display_h, text_rgb, bg_rgb, position,
+            poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count,
         )
 
         transpose_method = ROTATION_MAP.get(rotation_degrees)
@@ -436,45 +617,79 @@ def main():
             poster_meta = config.get("poster_meta", {})
             display_w = config.get("display_width", 1080)
             display_h = config.get("display_height", 1920)
-            text_rgb = hex_to_rgb(config.get("text_color") or config.get("accent_color"))
-            band_bg_rgb = hex_to_rgb(config.get("band_background_color") or "#0a0a0b")
-            position = config.get("poster_position", "center")
-            top_content = config.get("top_band_content", "status")
-            bottom_content = config.get("bottom_band_content", "date")
-            top_custom_text = config.get("top_custom_text", "")
-            bottom_custom_text = config.get("bottom_custom_text", "")
-            text_size_pct = config.get("text_size_pct", 100)
-            font_info = config.get("display_font", {})
+
+            active_appearance = config.get("active_appearance", "classic")
+            appearances = config.get("appearances", {})
+            classic = appearances.get("classic", {})
+            framed = appearances.get("framed", {})
 
             # Plex "now playing" override: plex_monitor.py drives this via
             # config.json, same as everything else here - this script just
             # renders whatever it finds. Swap in the single override poster
-            # and force whichever band is assigned to "NOW PLAYING",
-            # leaving the other band's normal content untouched so e.g. a
-            # custom top band and a Plex-driven bottom band can coexist.
+            # and force the appearance's status text to "NOW PLAYING".
             plex_state = config.get("plex_now_playing", {})
             plex_filename = plex_state.get("filename")
-            if plex_state.get("active") and plex_filename:
+            plex_active = bool(plex_state.get("active") and plex_filename)
+            if plex_active:
                 order = [plex_filename]
-                plex_band = config.get("plex_band", "bottom")
-                if plex_band == "top":
-                    top_content = "now_playing"
-                elif plex_band == "bottom":
-                    bottom_content = "now_playing"
+
+            if active_appearance == "framed":
+                text_rgb = hex_to_rgb(framed.get("text_color") or "#ffffff")
+                band_bg_rgb = hex_to_rgb(framed.get("background_color") or "#000000")
+                position = framed.get("poster_position", "center")
+                poster_scale_pct = framed.get("poster_scale_pct", 78)
+                top_content = "now_playing" if plex_active else framed.get("top_content", "status")
+                top_custom_text = framed.get("top_custom_text", "")
+                top_font_info = framed.get("top_font", {})
+                cast_count = framed.get("cast_count", 4)
+            else:
+                text_rgb = hex_to_rgb(classic.get("text_color") or config.get("accent_color") or "#5b8cff")
+                band_bg_rgb = hex_to_rgb(classic.get("band_background_color") or "#0a0a0b")
+                position = classic.get("poster_position", "center")
+                top_content = classic.get("top_band_content", "status")
+                bottom_content = classic.get("bottom_band_content", "date")
+                top_custom_text = classic.get("top_custom_text", "")
+                bottom_custom_text = classic.get("bottom_custom_text", "")
+                text_size_pct = classic.get("text_size_pct", 100)
+                font_info = classic.get("display_font", {})
+                if plex_active:
+                    # Leaves the other band's normal content untouched so e.g.
+                    # a custom top band and a Plex-driven bottom band coexist.
+                    plex_band = classic.get("plex_band", "bottom")
+                    if plex_band == "top":
+                        top_content = "now_playing"
+                    elif plex_band == "bottom":
+                        bottom_content = "now_playing"
 
             order = [f for f in order if os.path.exists(os.path.join(POSTER_DIR, f))]
 
             poster_fingerprint = tuple(
                 (f, os.path.getmtime(os.path.join(POSTER_DIR, f))) for f in order
             )
+            # Includes title/credits, not just release_date, so a TMDb/Plex
+            # metadata refresh (e.g. credits arriving after the poster itself)
+            # triggers a rebuild too, not just a poster file changing.
+            meta_fingerprint = tuple(sorted(
+                (k, v.get("release_date"), v.get("title"), json.dumps(v.get("credits"), sort_keys=True))
+                for k, v in poster_meta.items()
+            ))
 
-            signature = (
-                poster_fingerprint, interval, rotation, brightness, contrast, saturation,
-                display_w, display_h, text_rgb, band_bg_rgb, position, top_content, bottom_content,
-                top_custom_text, bottom_custom_text, text_size_pct,
-                font_info.get("path"), font_info.get("is_variable"),
-                tuple(sorted((k, v.get("release_date")) for k, v in poster_meta.items())),
-            )
+            if active_appearance == "framed":
+                signature = (
+                    "framed", poster_fingerprint, interval, rotation, brightness, contrast,
+                    saturation, display_w, display_h, text_rgb, band_bg_rgb, position,
+                    poster_scale_pct, top_content, top_custom_text,
+                    top_font_info.get("path"), top_font_info.get("is_variable"),
+                    cast_count, meta_fingerprint,
+                )
+            else:
+                signature = (
+                    "classic", poster_fingerprint, interval, rotation, brightness, contrast,
+                    saturation, display_w, display_h, text_rgb, band_bg_rgb, position,
+                    top_content, bottom_content, top_custom_text, bottom_custom_text,
+                    text_size_pct, font_info.get("path"), font_info.get("is_variable"),
+                    meta_fingerprint,
+                )
 
             process_died = current_process is not None and current_process.poll() is not None
 
@@ -491,11 +706,18 @@ def main():
             if signature != applied_signature or process_died or force_rebuild:
                 log(f"Rebuilding display: {len(order)} poster(s), {interval}s each")
 
-                paths = build_display_list(
-                    order, poster_meta, rotation, brightness, contrast, saturation,
-                    display_w, display_h, text_rgb, band_bg_rgb, position, top_content, bottom_content,
-                    top_custom_text, bottom_custom_text, text_size_pct, font_info,
-                )
+                if active_appearance == "framed":
+                    paths = build_framed_display_list(
+                        order, poster_meta, rotation, brightness, contrast, saturation,
+                        display_w, display_h, text_rgb, band_bg_rgb, position,
+                        poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count,
+                    )
+                else:
+                    paths = build_display_list(
+                        order, poster_meta, rotation, brightness, contrast, saturation,
+                        display_w, display_h, text_rgb, band_bg_rgb, position, top_content, bottom_content,
+                        top_custom_text, bottom_custom_text, text_size_pct, font_info,
+                    )
 
                 old_process = current_process
                 if old_process:

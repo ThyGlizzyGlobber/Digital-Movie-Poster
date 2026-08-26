@@ -49,15 +49,14 @@ log()  { echo "==> $*"; }
 warn() { echo "!!  $*" >&2; }
 
 confirm() {
-    # confirm "question" - returns 0 (yes) unless the user types something
-    # other than y/Y, or we're non-interactive and not --yes. NOT used for
-    # the final reboot - that has its own, deliberately separate gate
-    # (AUTO_REBOOT) so "-y" (skip benign prompts) can't accidentally reboot
-    # a wall-mounted device unattended. See --auto-reboot above.
+    # confirm "question" - returns 0 (yes) only if there's a TTY to ask on
+    # and the user types y/Y. Its only caller is the final reboot prompt,
+    # which deliberately has its own separate gate (AUTO_REBOOT) - ASSUME_YES
+    # ("-y", meant for skipping benign prompts like the TMDb key) must NEVER
+    # answer this one, or an unattended `install.sh -y` (what update.sh runs
+    # after every system-file change) would reboot the Pi out from under
+    # whoever's looking at it. See --auto-reboot above.
     local prompt="$1"
-    if [[ "$ASSUME_YES" == "1" ]]; then
-        return 0
-    fi
     if [[ ! -t 0 ]]; then
         return 1
     fi

@@ -34,6 +34,35 @@ DEFAULT_ACCENT = "#5b8cff"
 DEFAULT_BAND_BG = "#0a0a0b"
 DEFAULT_GRAIN_INTENSITY = 0.08
 DEFAULT_POSTER_MAX_WIDTH = 1600
+EMPTY_FONT = {"family": "", "status": "", "path": None, "bold_path": None, "is_variable": False}
+
+# Per-appearance settings, keyed by appearance name. Each appearance keeps its
+# own independent copy of these so switching "active_appearance" in the UI
+# never loses the other appearance's configuration. Fields NOT listed here
+# (display_width, rotation_degrees, brightness/contrast/saturation, etc.)
+# describe the physical screen/processing pipeline and stay global instead.
+CLASSIC_DEFAULTS = {
+    "poster_position": "center",
+    "top_band_content": "status",
+    "bottom_band_content": "date",
+    "top_custom_text": "",
+    "bottom_custom_text": "",
+    "text_size_pct": 100,
+    "band_background_color": DEFAULT_BAND_BG,
+    "text_color": DEFAULT_ACCENT,
+    "display_font": dict(EMPTY_FONT),
+    "plex_band": "bottom",
+}
+FRAMED_DEFAULTS = {
+    "poster_position": "center",
+    "poster_scale_pct": 78,
+    "top_content": "status",
+    "top_custom_text": "",
+    "top_font": dict(EMPTY_FONT),
+    "background_color": "#000000",
+    "text_color": "#ffffff",
+    "cast_count": 4,
+}
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # Commit title convention: "[v1.4.0] Fix schedule wake bug". update.sh only
@@ -100,6 +129,20 @@ def plex_headers(client_id, token=None):
     if token:
         headers["X-Plex-Token"] = token
     return headers
+
+
+def plex_connection_reachable(uri, headers, timeout=4):
+    """Plex's 'local' flag on a connection just means it detected the
+    address on one of the server machine's own interfaces - it says nothing
+    about whether *this* client can route to it. A server behind Docker/
+    Kubernetes networking (e.g. a TrueNAS SCALE app without host networking)
+    happily reports its internal pod/bridge IP as 'local'. Probing each
+    candidate is the only way to know it actually works."""
+    try:
+        resp = requests.get(f"{uri}/identity", headers=headers, timeout=timeout)
+        return resp.status_code < 500
+    except requests.RequestException:
+        return False
 
 
 def parse_version_title(raw_message):
@@ -301,17 +344,9 @@ def load_config():
         "poster_meta": {},
         "display_width": 1080,
         "display_height": 1920,
-        "poster_position": "center",
-        "top_band_content": "status",
-        "bottom_band_content": "date",
-        "top_custom_text": "",
-        "bottom_custom_text": "",
-        "text_size_pct": 100,
-        "display_font": {"family": "", "status": "", "path": None, "bold_path": None, "is_variable": False},
         "grain_intensity": DEFAULT_GRAIN_INTENSITY,
         "tmdb_enabled": True,
         "tmdb_schedule_enabled": True,
-        "band_background_color": DEFAULT_BAND_BG,
         "boot_image_seconds": 3.0,
         "boot_image_height_pct": 25,
         "boot_image_rotation": 0,
@@ -342,7 +377,6 @@ def load_config():
         "plex_username": "",
         "plex_server_name": "",
         "plex_server_url": "",
-        "plex_band": "bottom",
         "plex_now_playing": {"active": False},
     }
 
@@ -352,9 +386,31 @@ def load_config():
             config[key] = value
             changed = True
 
-    if "text_color" not in config:
-        config["text_color"] = config.get("accent_color", DEFAULT_ACCENT)
+    if "appearances" not in config:
+        # One-time migration: these used to be flat top-level keys. Pull
+        # whatever the install already had into "classic" (falling back to
+        # the pre-migration text_color source) so existing settings survive
+        # untouched, then seed "framed" fresh. Going forward both appearances
+        # keep their own independent copies of these fields.
+        if "text_color" not in config:
+            config["text_color"] = config.get("accent_color", DEFAULT_ACCENT)
+        migrated_classic = dict(CLASSIC_DEFAULTS)
+        for key in CLASSIC_DEFAULTS:
+            if key in config:
+                migrated_classic[key] = config.pop(key)
+        config["appearances"] = {"classic": migrated_classic, "framed": dict(FRAMED_DEFAULTS)}
+        config["active_appearance"] = "classic"
         changed = True
+    else:
+        for appearance_key, appearance_defaults in (("classic", CLASSIC_DEFAULTS), ("framed", FRAMED_DEFAULTS)):
+            appearance_config = config["appearances"].setdefault(appearance_key, {})
+            for key, value in appearance_defaults.items():
+                if key not in appearance_config:
+                    appearance_config[key] = value
+                    changed = True
+        if "active_appearance" not in config:
+            config["active_appearance"] = "classic"
+            changed = True
 
     if changed:
         save_config(config)
@@ -470,26 +526,33 @@ def index():
     if not HEX_RE.match(accent_color):
         accent_color = DEFAULT_ACCENT
 
-    text_color = config.get("text_color", accent_color)
-    if not HEX_RE.match(text_color):
-        text_color = accent_color
+    active_appearance = config.get("active_appearance", "classic")
+    classic = config["appearances"]["classic"]
+    framed = config["appearances"]["framed"]
 
-    band_bg_color = config.get("band_background_color", DEFAULT_BAND_BG)
-    if not HEX_RE.match(band_bg_color):
-        band_bg_color = DEFAULT_BAND_BG
+    classic_text_color = classic.get("text_color", accent_color)
+    if not HEX_RE.match(classic_text_color):
+        classic_text_color = accent_color
+
+    classic_band_bg_color = classic.get("band_background_color", DEFAULT_BAND_BG)
+    if not HEX_RE.match(classic_band_bg_color):
+        classic_band_bg_color = DEFAULT_BAND_BG
+
+    framed_text_color = framed.get("text_color", "#ffffff")
+    if not HEX_RE.match(framed_text_color):
+        framed_text_color = "#ffffff"
+
+    framed_background_color = framed.get("background_color", "#000000")
+    if not HEX_RE.match(framed_background_color):
+        framed_background_color = "#000000"
 
     brightness_pct = round(config.get("brightness", 1.0) * 100)
     contrast_pct = round(config.get("contrast", 1.0) * 100)
     saturation_pct = round(config.get("saturation", 1.0) * 100)
     display_width = config.get("display_width", 1080)
     display_height = config.get("display_height", 1920)
-    poster_position = config.get("poster_position", "center")
-    top_band_content = config.get("top_band_content", "status")
-    bottom_band_content = config.get("bottom_band_content", "date")
-    top_custom_text = config.get("top_custom_text", "")
-    bottom_custom_text = config.get("bottom_custom_text", "")
-    text_size_pct = config.get("text_size_pct", 100)
-    display_font = config.get("display_font", {})
+    classic_display_font = classic.get("display_font", {})
+    framed_top_font = framed.get("top_font", {})
     grain_intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
     tmdb_enabled = config.get("tmdb_enabled", True)
     tmdb_schedule_enabled = config.get("tmdb_schedule_enabled", True)
@@ -519,7 +582,7 @@ def index():
     plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
     plex_username = config.get("plex_username", "")
     plex_server_name = config.get("plex_server_name", "")
-    plex_band = config.get("plex_band", "bottom")
+    classic_plex_band = classic.get("plex_band", "bottom")
     plex_connected = bool(plex_username and load_env_file(ENV_PATH).get("PLEX_SERVER_TOKEN"))
     git_sha, git_message, git_version = get_git_info()
 
@@ -532,21 +595,31 @@ def index():
         accent_dim=adjust_lightness(accent_color, 0.6),
         accent_hover=adjust_lightness(accent_color, 1.2),
         accent_text=contrasting_text_color(accent_color),
-        text_color=text_color,
-        band_bg_color=band_bg_color,
+        active_appearance=active_appearance,
+        classic_text_color=classic_text_color,
+        classic_band_bg_color=classic_band_bg_color,
+        classic_poster_position=classic.get("poster_position", "center"),
+        classic_top_band_content=classic.get("top_band_content", "status"),
+        classic_bottom_band_content=classic.get("bottom_band_content", "date"),
+        classic_top_custom_text=classic.get("top_custom_text", ""),
+        classic_bottom_custom_text=classic.get("bottom_custom_text", ""),
+        classic_text_size_pct=classic.get("text_size_pct", 100),
+        classic_display_font_family=classic_display_font.get("family", ""),
+        classic_display_font_status=classic_display_font.get("status", ""),
+        framed_text_color=framed_text_color,
+        framed_background_color=framed_background_color,
+        framed_poster_position=framed.get("poster_position", "center"),
+        framed_poster_scale_pct=framed.get("poster_scale_pct", 78),
+        framed_top_content=framed.get("top_content", "status"),
+        framed_top_custom_text=framed.get("top_custom_text", ""),
+        framed_top_font_family=framed_top_font.get("family", ""),
+        framed_top_font_status=framed_top_font.get("status", ""),
+        framed_cast_count=framed.get("cast_count", 4),
         brightness_pct=brightness_pct,
         contrast_pct=contrast_pct,
         saturation_pct=saturation_pct,
         display_width=display_width,
         display_height=display_height,
-        poster_position=poster_position,
-        top_band_content=top_band_content,
-        bottom_band_content=bottom_band_content,
-        top_custom_text=top_custom_text,
-        bottom_custom_text=bottom_custom_text,
-        text_size_pct=text_size_pct,
-        display_font_family=display_font.get("family", ""),
-        display_font_status=display_font.get("status", ""),
         grain_intensity=grain_intensity,
         tmdb_enabled=tmdb_enabled,
         tmdb_schedule_enabled=tmdb_schedule_enabled,
@@ -579,7 +652,7 @@ def index():
         plex_poll_seconds=plex_poll_seconds,
         plex_username=plex_username,
         plex_server_name=plex_server_name,
-        plex_band=plex_band,
+        classic_plex_band=classic_plex_band,
         plex_connected=plex_connected,
     )
 
@@ -706,10 +779,15 @@ def poster_meta(filename):
 
     config = load_config()
     config.setdefault("poster_meta", {})
-    config["poster_meta"][safe_name] = {
-        "release_date": data.get("release_date"),
-        "title": data.get("title"),
-    }
+    # Merge rather than replace: fetch_posters.py and plex_monitor.py can each
+    # post their own subset of fields (e.g. credits arriving separately from
+    # title/release_date) without one call wiping out what the other set.
+    existing = config["poster_meta"].get(safe_name, {})
+    existing["release_date"] = data.get("release_date", existing.get("release_date"))
+    existing["title"] = data.get("title", existing.get("title"))
+    if "credits" in data:
+        existing["credits"] = data["credits"]
+    config["poster_meta"][safe_name] = existing
     save_config(config)
 
     return jsonify({"status": "ok"})
@@ -1144,22 +1222,47 @@ def plex_connect_status():
         return jsonify({"ok": False, "error": f"Signed in, but couldn't finish setup: {e}"}), 502
 
     server = None
+    fallback = None
     for resource in resources:
         if "server" not in (resource.get("provides") or ""):
             continue
         connections = resource.get("connections") or []
-        local = next((c for c in connections if c.get("local")), None)
-        connection = local or (connections[0] if connections else None)
-        if connection and connection.get("uri"):
+        # Try local-flagged connections first, but the flag only reflects
+        # what the server *thinks* its own address is - see
+        # plex_connection_reachable. Fall back to non-local (including
+        # relay) candidates if none of the local ones actually respond.
+        ordered = sorted(connections, key=lambda c: not c.get("local"))
+        access_token = resource.get("accessToken") or token
+        headers = plex_headers(client_id, access_token)
+
+        if ordered and not fallback and ordered[0].get("uri"):
+            fallback = {
+                "name": resource.get("name") or "Plex server",
+                "url": ordered[0]["uri"],
+                "token": access_token,
+            }
+
+        reachable = next(
+            (c for c in ordered if c.get("uri") and plex_connection_reachable(c["uri"], headers)),
+            None,
+        )
+        if reachable:
             server = {
                 "name": resource.get("name") or "Plex server",
-                "url": connection["uri"],
-                "token": resource.get("accessToken") or token,
+                "url": reachable["uri"],
+                "token": access_token,
             }
             break
 
+    warning = None
     if not server:
-        return jsonify({"ok": False, "error": "Signed in, but no Plex server was found on this account."}), 502
+        if not fallback:
+            return jsonify({"ok": False, "error": "Signed in, but no Plex server was found on this account."}), 502
+        server = fallback
+        warning = (
+            "Couldn't verify any of this server's addresses are reachable from the frame - "
+            "using its best guess. Now Playing may not work until that's resolved."
+        )
 
     config["plex_username"] = username
     config["plex_server_name"] = server["name"]
@@ -1170,7 +1273,10 @@ def plex_connect_status():
     env["PLEX_SERVER_TOKEN"] = server["token"]
     save_env_file(ENV_PATH, env)
 
-    return jsonify({"ok": True, "status": "linked", "username": username, "server_name": server["name"]})
+    result = {"ok": True, "status": "linked", "username": username, "server_name": server["name"]}
+    if warning:
+        result["warning"] = warning
+    return jsonify(result)
 
 
 @app.route("/plex/disconnect", methods=["POST"])
@@ -1238,6 +1344,12 @@ def reorder():
 @app.route("/settings", methods=["POST"])
 def settings():
     config = load_config()
+    classic = config["appearances"]["classic"]
+    framed = config["appearances"]["framed"]
+
+    active_appearance = request.form.get("active_appearance")
+    if active_appearance in ("classic", "framed"):
+        config["active_appearance"] = active_appearance
 
     minutes = request.form.get("interval_minutes", type=float)
     if minutes is not None and minutes > 0:
@@ -1250,14 +1362,6 @@ def settings():
     accent = request.form.get("accent_color", "").strip()
     if HEX_RE.match(accent):
         config["accent_color"] = accent
-
-    text_color = request.form.get("text_color", "").strip()
-    if HEX_RE.match(text_color):
-        config["text_color"] = text_color
-
-    band_bg = request.form.get("band_background_color", "").strip()
-    if HEX_RE.match(band_bg):
-        config["band_background_color"] = band_bg
 
     max_w = request.form.get("poster_max_width", type=int)
     if max_w is not None:
@@ -1303,20 +1407,84 @@ def settings():
     if height is not None and 100 <= height <= 8000:
         config["display_height"] = height
 
-    position = request.form.get("poster_position")
-    if position in ("top", "center", "bottom"):
-        config["poster_position"] = position
+    # --- Classic appearance ---
+    c_text_color = request.form.get("classic_text_color", "").strip()
+    if HEX_RE.match(c_text_color):
+        classic["text_color"] = c_text_color
 
-    top_content = request.form.get("top_band_content")
-    if top_content in ("none", "status", "date", "custom"):
-        config["top_band_content"] = top_content
+    c_band_bg = request.form.get("classic_band_background_color", "").strip()
+    if HEX_RE.match(c_band_bg):
+        classic["band_background_color"] = c_band_bg
 
-    bottom_content = request.form.get("bottom_band_content")
-    if bottom_content in ("none", "status", "date", "custom"):
-        config["bottom_band_content"] = bottom_content
+    c_position = request.form.get("classic_poster_position")
+    if c_position in ("top", "center", "bottom"):
+        classic["poster_position"] = c_position
 
-    config["top_custom_text"] = request.form.get("top_custom_text", "").strip()[:60]
-    config["bottom_custom_text"] = request.form.get("bottom_custom_text", "").strip()[:60]
+    c_top_content = request.form.get("classic_top_band_content")
+    if c_top_content in ("none", "status", "date", "custom"):
+        classic["top_band_content"] = c_top_content
+
+    c_bottom_content = request.form.get("classic_bottom_band_content")
+    if c_bottom_content in ("none", "status", "date", "custom"):
+        classic["bottom_band_content"] = c_bottom_content
+
+    classic["top_custom_text"] = request.form.get("classic_top_custom_text", "").strip()[:60]
+    classic["bottom_custom_text"] = request.form.get("classic_bottom_custom_text", "").strip()[:60]
+
+    c_text_size_pct = request.form.get("classic_text_size_pct", type=float)
+    if c_text_size_pct is not None:
+        classic["text_size_pct"] = max(50, min(200, c_text_size_pct))
+
+    c_font_family = request.form.get("classic_display_font_family", "").strip()
+    c_current_font = classic.get("display_font", {})
+    if c_font_family != c_current_font.get("family", ""):
+        if not c_font_family:
+            classic["display_font"] = dict(EMPTY_FONT)
+        else:
+            font_info, status = fetch_and_cache_font(c_font_family)
+            if font_info:
+                classic["display_font"] = {"family": c_font_family, "status": status, **font_info}
+            else:
+                classic["display_font"] = {**c_current_font, "family": c_font_family, "status": status}
+
+    # --- Framed appearance ---
+    f_text_color = request.form.get("framed_text_color", "").strip()
+    if HEX_RE.match(f_text_color):
+        framed["text_color"] = f_text_color
+
+    f_bg_color = request.form.get("framed_background_color", "").strip()
+    if HEX_RE.match(f_bg_color):
+        framed["background_color"] = f_bg_color
+
+    f_position = request.form.get("framed_poster_position")
+    if f_position in ("top", "center", "bottom"):
+        framed["poster_position"] = f_position
+
+    f_scale = request.form.get("framed_poster_scale_pct", type=float)
+    if f_scale is not None:
+        framed["poster_scale_pct"] = max(50, min(95, f_scale))
+
+    f_top_content = request.form.get("framed_top_content")
+    if f_top_content in ("none", "status", "date", "custom"):
+        framed["top_content"] = f_top_content
+
+    framed["top_custom_text"] = request.form.get("framed_top_custom_text", "").strip()[:60]
+
+    f_cast_count = request.form.get("framed_cast_count", type=int)
+    if f_cast_count is not None:
+        framed["cast_count"] = max(0, min(10, f_cast_count))
+
+    f_font_family = request.form.get("framed_top_font_family", "").strip()
+    f_current_font = framed.get("top_font", {})
+    if f_font_family != f_current_font.get("family", ""):
+        if not f_font_family:
+            framed["top_font"] = dict(EMPTY_FONT)
+        else:
+            font_info, status = fetch_and_cache_font(f_font_family)
+            if font_info:
+                framed["top_font"] = {"family": f_font_family, "status": status, **font_info}
+            else:
+                framed["top_font"] = {**f_current_font, "family": f_font_family, "status": status}
 
     # Same hidden-marker trick as the TMDb form: checkbox absence alone
     # can't distinguish "unchecked" from "different form entirely".
@@ -1380,23 +1548,7 @@ def settings():
 
         band = request.form.get("plex_band")
         if band in ("top", "bottom", "none"):
-            config["plex_band"] = band
-
-    text_size_pct = request.form.get("text_size_pct", type=float)
-    if text_size_pct is not None:
-        config["text_size_pct"] = max(50, min(200, text_size_pct))
-
-    font_family = request.form.get("display_font_family", "").strip()
-    current_font = config.get("display_font", {})
-    if font_family != current_font.get("family", ""):
-        if not font_family:
-            config["display_font"] = {"family": "", "status": "", "path": None, "bold_path": None, "is_variable": False}
-        else:
-            font_info, status = fetch_and_cache_font(font_family)
-            if font_info:
-                config["display_font"] = {"family": font_family, "status": status, **font_info}
-            else:
-                config["display_font"] = {**current_font, "family": font_family, "status": status}
+            classic["plex_band"] = band
 
     save_config(config)
 

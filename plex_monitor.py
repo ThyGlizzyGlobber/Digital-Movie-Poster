@@ -72,6 +72,60 @@ def title_for(session):
     return session.get("title", "")
 
 
+def poster_thumb_for(session):
+    """For a movie, session 'thumb' is already the movie's poster (portrait,
+    same ~2:3 ratio TMDb uses). For an episode it's the episode's own
+    screenshot instead - a 16:9 still frame, nothing like a poster shape.
+    grandparentThumb is the *show's* poster, portrait like everything else,
+    so prefer it for episodes the same way title_for prefers the show name."""
+    if session.get("type") == "episode" and session.get("grandparentThumb"):
+        return session["grandparentThumb"]
+    return session.get("thumb")
+
+
+def fetch_credits(server_url, headers, session, cast_count=4):
+    """Session objects from /status/sessions carry no crew/cast at all - only
+    the full metadata object (fetched by ratingKey) has Director/Writer/
+    Producer/Role arrays. For an episode, use the *show's* metadata
+    (grandparentRatingKey) rather than the episode's own - same reasoning as
+    poster_thumb_for: since the poster shown is the show's poster, the
+    credits should describe the show (creator/regular cast), not one
+    episode's specific writer/director. Plex has no dedicated "composer"
+    field, so that line is simply never populated here - the billing block
+    just skips it, same as any other missing field."""
+    rating_key = session.get("grandparentRatingKey") if session.get("type") == "episode" else session.get("ratingKey")
+    if not rating_key:
+        return {}
+
+    try:
+        resp = requests.get(f"{server_url}/library/metadata/{rating_key}", headers=headers, timeout=10)
+        resp.raise_for_status()
+        items = resp.json().get("MediaContainer", {}).get("Metadata", [])
+    except requests.RequestException:
+        return {}
+    if not items:
+        return {}
+    meta = items[0]
+
+    def tags(field):
+        return [entry["tag"] for entry in meta.get(field, []) if entry.get("tag")]
+
+    credits = {}
+    directors = tags("Director")
+    if directors:
+        credits["director"] = directors[0]
+    writers = tags("Writer")
+    if writers:
+        credits["writers"] = writers[:3]
+    producers = tags("Producer")
+    if producers:
+        credits["producers"] = producers[:3]
+    cast = tags("Role")
+    if cast:
+        credits["cast"] = cast[:cast_count]
+    return credits
+
+
 def find_now_playing(server_url, headers, username):
     resp = requests.get(f"{server_url}/status/sessions", headers=headers, timeout=10)
     resp.raise_for_status()
@@ -88,8 +142,8 @@ def find_now_playing(server_url, headers, username):
     return None
 
 
-def activate(server_url, headers, session):
-    thumb = session.get("thumb")
+def activate(server_url, headers, session, cast_count=4):
+    thumb = poster_thumb_for(session)
     if not thumb:
         return False
 
@@ -102,9 +156,10 @@ def activate(server_url, headers, session):
     requests.post(f"{APP_BASE}/upload", files=files, timeout=180).raise_for_status()
 
     title = title_for(session)
+    credits = fetch_credits(server_url, headers, session, cast_count)
     requests.post(
         f"{APP_BASE}/poster-meta/{POSTER_FILENAME}",
-        json={"title": title, "release_date": None},
+        json={"title": title, "release_date": None, "credits": credits},
         timeout=15,
     ).raise_for_status()
 
@@ -154,8 +209,9 @@ def main():
 
         if session_key and session_key != current_session_key:
             log(f"Now playing: {title_for(session)}")
+            cast_count = config.get("appearances", {}).get("framed", {}).get("cast_count", 4)
             try:
-                if activate(server_url, headers, session):
+                if activate(server_url, headers, session, cast_count):
                     current_session_key = session_key
             except requests.RequestException as e:
                 log(f"Could not activate now-playing poster: {e}")
