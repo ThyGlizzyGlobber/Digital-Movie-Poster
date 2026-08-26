@@ -3,7 +3,9 @@ import re
 import json
 import colorsys
 import subprocess
+import uuid
 from datetime import date, datetime
+from urllib.parse import urlencode
 import numpy as np
 import requests
 from flask import Flask, request, redirect, url_for, render_template, jsonify
@@ -23,6 +25,10 @@ UPDATE_SCRIPT = os.path.join(BASE_DIR, "update.sh")
 UPDATE_LOG = os.path.join(BASE_DIR, "update.log")
 BOOT_IMAGE_PATH = os.path.join(BASE_DIR, "static", "boot_image.png")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
+PLEX_NOWPLAYING_FILENAME = "plex_nowplaying.jpg"
+PLEX_PRODUCT = "Poster Frame"
+PLEX_VERSION = "1.0"
+PLEX_TV = "https://plex.tv"
 DEFAULT_INTERVAL_SECONDS = 900  # 15 minutes
 DEFAULT_ACCENT = "#5b8cff"
 DEFAULT_BAND_BG = "#0a0a0b"
@@ -62,6 +68,38 @@ def load_env_file(path):
                 key, _, value = line.partition("=")
                 env[key.strip()] = value.strip()
     return env
+
+
+def save_env_file(path, env):
+    """Full-file rewrite, same simplicity level as save_config() - callers
+    load_env_file() first, mutate the dict, then pass it here."""
+    with open(path, "w") as f:
+        for key, value in env.items():
+            f.write(f"{key}={value}\n")
+    os.chmod(path, 0o600)
+
+
+def get_plex_client_id(config):
+    """A stable per-install identifier Plex needs on every request - not a
+    secret, so it lives in config.json rather than .env."""
+    client_id = config.get("plex_client_id")
+    if not client_id:
+        client_id = str(uuid.uuid4())
+        config["plex_client_id"] = client_id
+        save_config(config)
+    return client_id
+
+
+def plex_headers(client_id, token=None):
+    headers = {
+        "X-Plex-Client-Identifier": client_id,
+        "X-Plex-Product": PLEX_PRODUCT,
+        "X-Plex-Version": PLEX_VERSION,
+        "Accept": "application/json",
+    }
+    if token:
+        headers["X-Plex-Token"] = token
+    return headers
 
 
 def parse_version_title(raw_message):
@@ -298,6 +336,14 @@ def load_config():
         "tmdb_min_popularity": 0,
         "tmdb_min_popularity_upcoming": 10,
         "tmdb_upcoming_months": 12,
+        "plex_client_id": "",
+        "plex_enabled": False,
+        "plex_poll_seconds": 15.0,
+        "plex_username": "",
+        "plex_server_name": "",
+        "plex_server_url": "",
+        "plex_band": "bottom",
+        "plex_now_playing": {"active": False},
     }
 
     changed = False
@@ -410,7 +456,9 @@ def prepare_poster(image, intensity, max_width):
 
 @app.route("/")
 def index():
-    poster_files = get_ordered_posters()
+    # The Plex now-playing override is system-managed (plex_monitor.py),
+    # not something to show in the normal draggable rotation list.
+    poster_files = [f for f in get_ordered_posters() if f != PLEX_NOWPLAYING_FILENAME]
     config = load_config()
     poster_meta_map = config.get("poster_meta", {})
     posters = [describe_poster(f, poster_meta_map) for f in poster_files]
@@ -467,6 +515,12 @@ def index():
     tmdb_min_popularity = config.get("tmdb_min_popularity", 0)
     tmdb_min_popularity_upcoming = config.get("tmdb_min_popularity_upcoming", 10)
     tmdb_upcoming_months = config.get("tmdb_upcoming_months", 12)
+    plex_enabled = config.get("plex_enabled", False)
+    plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
+    plex_username = config.get("plex_username", "")
+    plex_server_name = config.get("plex_server_name", "")
+    plex_band = config.get("plex_band", "bottom")
+    plex_connected = bool(plex_username and load_env_file(ENV_PATH).get("PLEX_SERVER_TOKEN"))
     git_sha, git_message, git_version = get_git_info()
 
     return render_template(
@@ -521,6 +575,12 @@ def index():
         git_sha=git_sha,
         git_message=git_message,
         git_version=git_version,
+        plex_enabled=plex_enabled,
+        plex_poll_seconds=plex_poll_seconds,
+        plex_username=plex_username,
+        plex_server_name=plex_server_name,
+        plex_band=plex_band,
+        plex_connected=plex_connected,
     )
 
 
@@ -991,6 +1051,174 @@ def update_log():
     return jsonify({"running": running, "content": content})
 
 
+# Holds the pin id from the most recent /plex/connect call, so
+# /plex/connect/status knows what to poll. A single pending pin is enough -
+# this is a single-process app and only one browser tab would ever be
+# driving the connect flow at a time.
+_plex_pending_pin = None
+
+
+@app.route("/plex/connect", methods=["POST"])
+def plex_connect():
+    """Starts the Plex PIN sign-in flow. The frontend opens the returned
+    auth_url in a new tab, then polls /plex/connect/status."""
+    global _plex_pending_pin
+
+    config = load_config()
+    client_id = get_plex_client_id(config)
+
+    try:
+        resp = requests.post(
+            f"{PLEX_TV}/api/v2/pins",
+            headers=plex_headers(client_id),
+            params={"strong": "true"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        pin = resp.json()
+    except requests.RequestException as e:
+        return jsonify({"ok": False, "error": f"Could not reach plex.tv: {e}"}), 502
+
+    _plex_pending_pin = {"id": pin["id"]}
+
+    auth_url = "https://app.plex.tv/auth#?" + urlencode({
+        "clientID": client_id,
+        "code": pin["code"],
+        "context[device][product]": PLEX_PRODUCT,
+    })
+
+    return jsonify({"ok": True, "auth_url": auth_url})
+
+
+@app.route("/plex/connect/status")
+def plex_connect_status():
+    """Polled by the frontend after opening the auth_url. Once the user
+    approves the pin on plex.tv, this finishes setup in one shot: capture
+    the username, find a server, and store what plex_monitor.py needs."""
+    global _plex_pending_pin
+
+    if not _plex_pending_pin:
+        return jsonify({"ok": False, "error": "No connection in progress"}), 400
+
+    config = load_config()
+    client_id = get_plex_client_id(config)
+
+    try:
+        resp = requests.get(
+            f"{PLEX_TV}/api/v2/pins/{_plex_pending_pin['id']}",
+            headers=plex_headers(client_id),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        pin = resp.json()
+    except requests.RequestException as e:
+        return jsonify({"ok": False, "error": f"Could not reach plex.tv: {e}"}), 502
+
+    token = pin.get("authToken")
+    if not token:
+        return jsonify({"ok": True, "status": "pending"})
+
+    _plex_pending_pin = None
+
+    try:
+        user_resp = requests.get(
+            f"{PLEX_TV}/api/v2/user",
+            headers=plex_headers(client_id, token),
+            timeout=15,
+        )
+        user_resp.raise_for_status()
+        user_data = user_resp.json()
+        username = user_data.get("username") or user_data.get("title") or user_data.get("email") or "Plex user"
+
+        resources_resp = requests.get(
+            f"{PLEX_TV}/api/v2/resources",
+            headers=plex_headers(client_id, token),
+            params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
+            timeout=15,
+        )
+        resources_resp.raise_for_status()
+        resources = resources_resp.json()
+        if isinstance(resources, dict):
+            resources = resources.get("resources") or resources.get("Device") or []
+    except requests.RequestException as e:
+        return jsonify({"ok": False, "error": f"Signed in, but couldn't finish setup: {e}"}), 502
+
+    server = None
+    for resource in resources:
+        if "server" not in (resource.get("provides") or ""):
+            continue
+        connections = resource.get("connections") or []
+        local = next((c for c in connections if c.get("local")), None)
+        connection = local or (connections[0] if connections else None)
+        if connection and connection.get("uri"):
+            server = {
+                "name": resource.get("name") or "Plex server",
+                "url": connection["uri"],
+                "token": resource.get("accessToken") or token,
+            }
+            break
+
+    if not server:
+        return jsonify({"ok": False, "error": "Signed in, but no Plex server was found on this account."}), 502
+
+    config["plex_username"] = username
+    config["plex_server_name"] = server["name"]
+    config["plex_server_url"] = server["url"]
+    save_config(config)
+
+    env = load_env_file(ENV_PATH)
+    env["PLEX_SERVER_TOKEN"] = server["token"]
+    save_env_file(ENV_PATH, env)
+
+    return jsonify({"ok": True, "status": "linked", "username": username, "server_name": server["name"]})
+
+
+@app.route("/plex/disconnect", methods=["POST"])
+def plex_disconnect():
+    config = load_config()
+    config["plex_username"] = ""
+    config["plex_server_name"] = ""
+    config["plex_server_url"] = ""
+    config["plex_enabled"] = False
+    config["plex_now_playing"] = {"active": False}
+    config["order"] = [f for f in config.get("order", []) if f != PLEX_NOWPLAYING_FILENAME]
+    config.get("poster_meta", {}).pop(PLEX_NOWPLAYING_FILENAME, None)
+    save_config(config)
+
+    for directory in (POSTER_DIR, ORIGINAL_DIR):
+        path = os.path.join(directory, PLEX_NOWPLAYING_FILENAME)
+        if os.path.exists(path):
+            os.remove(path)
+
+    env = load_env_file(ENV_PATH)
+    if env.pop("PLEX_SERVER_TOKEN", None) is not None:
+        save_env_file(ENV_PATH, env)
+
+    return redirect(url_for("index"))
+
+
+@app.route("/plex/now-playing", methods=["POST"])
+def plex_now_playing():
+    """Internal - called only by plex_monitor.py to report what it found,
+    never by the browser. No auth beyond what every other route here has
+    (none): this is a LAN-only home appliance, an existing trust model,
+    not something this feature changes."""
+    data = request.get_json(silent=True) or {}
+    config = load_config()
+
+    if data.get("active"):
+        config["plex_now_playing"] = {
+            "active": True,
+            "filename": data.get("filename"),
+            "title": data.get("title"),
+        }
+    else:
+        config["plex_now_playing"] = {"active": False}
+
+    save_config(config)
+    return jsonify({"status": "ok"})
+
+
 @app.route("/reorder", methods=["POST"])
 def reorder():
     data = request.get_json(silent=True)
@@ -1142,6 +1370,17 @@ def settings():
         months = request.form.get("tmdb_upcoming_months", type=float)
         if months is not None:
             config["tmdb_upcoming_months"] = max(1, min(36, months))
+
+    if request.form.get("_plex_form") == "1":
+        config["plex_enabled"] = "plex_enabled" in request.form
+
+        poll_seconds = request.form.get("plex_poll_seconds", type=float)
+        if poll_seconds is not None:
+            config["plex_poll_seconds"] = max(5.0, min(120.0, poll_seconds))
+
+        band = request.form.get("plex_band")
+        if band in ("top", "bottom", "none"):
+            config["plex_band"] = band
 
     text_size_pct = request.form.get("text_size_pct", type=float)
     if text_size_pct is not None:

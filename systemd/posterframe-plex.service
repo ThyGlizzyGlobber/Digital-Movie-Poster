@@ -1,0 +1,14 @@
+[Unit]
+Description=Poster frame Plex now-playing monitor
+After=network-online.target posterframe-web.service
+Wants=network-online.target
+
+[Service]
+User=__USER__
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/venv/bin/python3 __DIR__/plex_monitor.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

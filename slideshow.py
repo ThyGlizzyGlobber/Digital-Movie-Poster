@@ -121,11 +121,13 @@ def resolve_band_text(content_type, meta, custom_text):
         return compute_status_text(meta)
     if content_type == "date":
         return compute_date_text(meta)
+    if content_type == "now_playing":
+        return "NOW PLAYING"
     return None
 
 
 def is_bold_content(content_type):
-    return content_type == "status"
+    return content_type in ("status", "now_playing")
 
 
 def draw_centered_text(draw, canvas_w, y_center, text, font, fill):
@@ -443,6 +445,22 @@ def main():
             bottom_custom_text = config.get("bottom_custom_text", "")
             text_size_pct = config.get("text_size_pct", 100)
             font_info = config.get("display_font", {})
+
+            # Plex "now playing" override: plex_monitor.py drives this via
+            # config.json, same as everything else here - this script just
+            # renders whatever it finds. Swap in the single override poster
+            # and force whichever band is assigned to "NOW PLAYING",
+            # leaving the other band's normal content untouched so e.g. a
+            # custom top band and a Plex-driven bottom band can coexist.
+            plex_state = config.get("plex_now_playing", {})
+            plex_filename = plex_state.get("filename")
+            if plex_state.get("active") and plex_filename:
+                order = [plex_filename]
+                plex_band = config.get("plex_band", "bottom")
+                if plex_band == "top":
+                    top_content = "now_playing"
+                elif plex_band == "bottom":
+                    bottom_content = "now_playing"
 
             order = [f for f in order if os.path.exists(os.path.join(POSTER_DIR, f))]
 

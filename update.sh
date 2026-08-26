@@ -122,5 +122,12 @@ echo "Now at $(git rev-parse --short HEAD)"
 echo "Restarting slideshow"
 sudo -n /usr/bin/systemctl restart posterframe-slideshow
 
+# Non-fatal: on the very first update after posterframe-plex.service was
+# added, the sudoers grant for it only exists if the install.sh step above
+# already ran and succeeded. Don't let this block the web app restart
+# below, which matters far more and must always run.
+echo "Restarting Plex monitor"
+sudo -n /usr/bin/systemctl restart posterframe-plex || echo "Could not restart posterframe-plex (see above) - not fatal" >&2
+
 echo "Restarting web app (this connection will drop)"
 sudo -n /usr/bin/systemctl restart posterframe-web

@@ -29,19 +29,21 @@ If you add a feature, add its controls to the UI.
 ├── slideshow.py         # display loop: composites posters, drives fbi
 ├── spinner.py           # boot splash + loading spinner, writes to /dev/fb0
 ├── fetch_posters.py     # TMDb sync (run by timer or "Sync now")
+├── plex_monitor.py      # Plex "Now Playing" poller - see Pipeline below
 ├── install.sh           # one-time SSH bootstrap - system packages, units,
 │                        #   sudoers, boot cmdline. Rare to re-run.
 ├── update.sh            # git pull + service restart - what "Update now"
 │                        #   in the web UI runs. See Web UI gotchas below.
 ├── templates/index.html # entire UI, single file, tabbed
 ├── config.json          # ALL state. Single source of truth.
-├── .env                 # TMDB_API_KEY (chmod 600, not in git)
+├── .env                 # TMDB_API_KEY, PLEX_SERVER_TOKEN (chmod 600, not in git)
 ├── static/posters/      # processed posters — what actually gets displayed
 ├── originals/           # untouched full-res source images
 ├── prepared/            # display-ready composites (regenerated, disposable)
 ├── fonts_cache/         # downloaded Google Font TTFs
 ├── slideshow.log        # slideshow output (NOT journald — see gotcha below)
 ├── tmdb_sync.log        # manual sync output
+├── plex_monitor.log     # plex_monitor.py output
 └── update.log           # output of the last "Update now" run
 ```
 
@@ -51,17 +53,19 @@ If you add a feature, add its controls to the UI.
 | `posterframe-web` | Flask app, port 5000, runs as `pi` |
 | `posterframe-slideshow` | display loop, runs as **root**, has a drop-in override |
 | `posterframe-spinner` | boot spinner, root, starts early via `sysinit.target` |
+| `posterframe-plex` | Plex now-playing poller, runs as `pi`, `Restart=always` |
 | `posterframe-fetch.timer` | daily TMDb sync at 04:00 |
 
 `/etc/systemd/system/posterframe-slideshow.service.d/override.conf` sets
 `StandardInput/Output=tty` and `TTYPath=/dev/tty1` — required or fbi runs blind.
 
-`/etc/sudoers.d/posterframe` grants `pi` five things, NOPASSWD:
+`/etc/sudoers.d/posterframe` grants `pi` six things, NOPASSWD:
 `systemctl poweroff`, `systemctl reboot`, `systemctl restart posterframe-slideshow`,
-`systemctl restart posterframe-web` (what `update.sh` needs to apply a pulled
-code update), and running `install.sh` itself (any args) as root - see "Web
-UI" gotchas below for what that last one means and why it's scoped to the
-whole script rather than install.sh's individual apt/tee/systemctl calls.
+`systemctl restart posterframe-web`, `systemctl restart posterframe-plex` (what
+`update.sh` needs to apply a pulled code update), and running `install.sh`
+itself (any args) as root - see "Web UI" gotchas below for what that last one
+means and why it's scoped to the whole script rather than install.sh's
+individual apt/tee/systemctl calls.
 
 ---
 
@@ -81,7 +85,22 @@ whole script rather than install.sh's individual apt/tee/systemctl calls.
 Filename prefixes carry meaning and are load-bearing:
 - `tmdb_<media>_<id>.jpg` — auto-synced; the sync will remove these
 - `tmdbpin_<media>_<id>.jpg` — pinned by URL; sync **never** removes these
+- `plex_nowplaying.jpg` — the Plex now-playing override, see below; not part
+  of the normal rotation, hidden from the Posters tab
 - anything else — manual upload; never touched automatically
+
+**Plex now-playing** is a parallel, temporary override on top of the pipeline
+above, not a replacement for it: `plex_monitor.py` polls the configured Plex
+server every `plex_poll_seconds` and, when the signed-in account is playing a
+movie/episode, drives the exact same `/upload` → `/poster-meta/<filename>`
+pipeline (always as the single fixed file `plex_nowplaying.jpg`), then calls
+`/plex/now-playing` to flip `config["plex_now_playing"]["active"]`. `slideshow.py`
+checks that flag first, on every poll; when active it shows only that one
+poster and forces whichever band `plex_band` names to say "NOW PLAYING",
+leaving the other band's normal content untouched. When playback stops,
+`plex_monitor.py` calls `/delete/plex_nowplaying.jpg` and clears the flag,
+and normal rotation resumes (from the start of `order`, same as any other
+settings change causes).
 
 ---
 
@@ -235,6 +254,46 @@ Filename prefixes carry meaning and are load-bearing:
   harmlessly (worst case: bar stops advancing until the restart/reconnect
   fires anyway), but keep the two in sync when editing either.
 
+### Plex
+- **Sign-in is a PIN flow, not a pasted token.** "Connect to Plex" (Plex tab)
+  POSTs `/plex/connect`, which creates a pin via `plex.tv/api/v2/pins` and
+  hands back an `app.plex.tv/auth` URL; the JS opens that in a new tab (opened
+  *synchronously* on the click, then re-pointed once the fetch resolves - see
+  next gotcha) and polls `/plex/connect/status` until `authToken` shows up.
+  Both ends need the *same* `X-Plex-Client-Identifier` - it's generated once
+  (`plex_client_id` in config.json, not a secret so it doesn't belong in
+  `.env`) and reused for every Plex API call, including `plex_monitor.py`'s.
+- **`window.open()` is called before the fetch, not after.** Calling it
+  inside the `/plex/connect` response handler would happen async, after the
+  click's own call stack has already unwound - most browsers' popup blockers
+  treat that as an unsolicited popup and kill it. Opening a blank tab
+  synchronously in the click handler, then setting `.location` on it once the
+  real `auth_url` arrives, keeps it inside the trusted user-gesture window.
+- **Only one secret is persisted: `PLEX_SERVER_TOKEN`.** The account-level
+  token from the PIN flow is used in-memory just long enough to list the
+  account's servers (`plex.tv/api/v2/resources`) and pick one (first match,
+  preferring a `local: true` connection) - what actually gets saved is that
+  *resource's own* `accessToken`, used against the local Plex Media Server's
+  `/status/sessions`. No account token is ever written to disk.
+- **`plex_monitor.py` never touches `config.json` or `static/posters/`
+  directly** - same rule as `fetch_posters.py`. It drives the frame purely
+  through `app.py`'s existing `/upload` and `/poster-meta/<filename>` routes
+  plus `/delete/<filename>`, and one new internal route, `/plex/now-playing`,
+  that only it calls.
+- **A network hiccup doesn't flip the override off.** If `/status/sessions`
+  fails, `plex_monitor.py` logs it and skips that poll *without* touching
+  `plex_now_playing.active` - only an explicit empty/no-match session list
+  counts as "stopped". Otherwise a blip would flicker the display back to
+  normal rotation and immediately back.
+- **No staleness check.** If `posterframe-plex.service` dies outright (not
+  just crashes-and-restarts, which `Restart=always` already handles),
+  `plex_now_playing.active` can stay stuck `true` with nothing to correct it.
+  Known v1 limitation, not solved yet.
+- **Expect real latency from "press play" to "poster changes."** Up to
+  `plex_poll_seconds` to notice, plus the same ~13s/poster grain pipeline
+  every other poster goes through, plus slideshow.py's normal 3s poll.
+  15-30s end to end is normal, not a bug.
+
 ---
 
 ## Conventions
@@ -256,7 +315,9 @@ category limits, popularity filters, age-based expiry with a "still in cinemas"
 reprieve), pin-by-URL, boot logo + animated spinner, display calibration,
 custom Google Fonts, band text with release-aware status, tabbed UI with unified
 save, power controls, in-UI code updates ("Update now") with a live
-progress bar through the restart/reconnect cycle.
+progress bar through the restart/reconnect cycle, Plex "Now Playing"
+overrides (PIN sign-in, dedicated band independent of the normal top/bottom
+content settings).
 
 ### Open items
 1. **Trailer playback.** The goal is trailer on top, poster below, no gap. Not

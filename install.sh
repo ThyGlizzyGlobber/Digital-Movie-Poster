@@ -169,11 +169,12 @@ log "Enabling services"
 priv systemctl enable posterframe-web.service
 priv systemctl enable posterframe-slideshow.service
 priv systemctl enable posterframe-spinner.service
+priv systemctl enable posterframe-plex.service
 priv systemctl enable posterframe-fetch.timer
 
 # ---------------------------------------------------------------------------
-# sudoers - grant exactly what the web UI needs: four specific systemctl
-# calls (power controls, plus the two service restarts update.sh issues
+# sudoers - grant exactly what the web UI needs: five specific systemctl
+# calls (power controls, plus the three service restarts update.sh issues
 # after a git pull), and this script by name (so update.sh can apply a
 # pulled systemd/install.sh change unattended - see the top-of-file note).
 # Nothing else. Validated with visudo before it's installed; a bad sudoers
@@ -182,7 +183,7 @@ priv systemctl enable posterframe-fetch.timer
 log "Installing sudoers rule"
 SUDOERS_TMP="$(mktemp)"
 cat > "$SUDOERS_TMP" <<EOF
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl restart posterframe-slideshow, /usr/bin/systemctl restart posterframe-web, $BASE_DIR/install.sh
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl restart posterframe-slideshow, /usr/bin/systemctl restart posterframe-web, /usr/bin/systemctl restart posterframe-plex, $BASE_DIR/install.sh
 EOF
 
 if priv visudo -c -f "$SUDOERS_TMP" > /dev/null; then

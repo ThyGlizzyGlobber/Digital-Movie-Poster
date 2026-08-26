@@ -50,7 +50,7 @@ down the Pi. You shouldn't need to SSH in again after initial setup.
 If you do need to check on it:
 
 ```bash
-sudo systemctl status posterframe-web posterframe-slideshow
+sudo systemctl status posterframe-web posterframe-slideshow posterframe-plex
 tail -f ~/posterframe/slideshow.log      # display loop's own log
 tail -f ~/posterframe/tmdb_sync.log      # last manual/scheduled TMDb sync
 sudo systemctl restart posterframe-slideshow
@@ -58,6 +58,21 @@ sudo systemctl restart posterframe-slideshow
 
 The scheduled TMDb sync runs daily at 04:00 (`posterframe-fetch.timer`); use
 "Sync now" in the web UI to trigger one immediately.
+
+## Plex "Now Playing"
+
+Turn on the **Plex tab → Connect to Plex** and sign in via the Plex page
+that opens. Once linked, enabling **Show Now Playing overrides** makes the
+frame temporarily swap to whatever movie or episode your account is playing
+on that server, with a "NOW PLAYING" label — and switch back to normal
+rotation automatically when playback stops. Pick which band (top/bottom/none)
+carries the label; the other band keeps showing whatever it's normally set
+to, so a custom top band and a Plex-driven bottom band can coexist.
+
+Expect roughly 15-30 seconds between pressing play and the poster changing —
+it's checking on an interval (default 15s, adjustable), and posters go
+through the same processing every other poster does. Not a bug, just how
+long the pipeline takes on a Zero W.
 
 ## Updating
 
@@ -120,6 +135,11 @@ web UI itself can't be used to update.
 - **TMDb sync isn't picking anything up** — check `tmdb_sync.log`, and
   confirm the API key is set (web UI → TMDb tab) and at least one source
   category is enabled with a low enough popularity threshold.
+- **Plex "Now Playing" isn't triggering** — check `plex_monitor.log` and
+  `sudo systemctl status posterframe-plex`. Confirm **Show Now Playing
+  overrides** is on (Plex tab), and that you're playing from the *same*
+  Plex account and server you connected with — the frame ignores playback
+  from other accounts on a shared server.
 - **Console text flashing over the display** — `install.sh` edits
   `/boot/firmware/cmdline.txt` to silence it; a `.orig` backup is kept
   alongside it if you need to compare or revert.
