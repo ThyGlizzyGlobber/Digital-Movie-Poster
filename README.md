@@ -75,10 +75,24 @@ commits still work, they just show the commit hash and message instead.
 `config.json` self-heals — new settings added by an update fill in with
 defaults the next time it's read, so existing config is preserved.
 
-This only updates code. If a change also touches `systemd/*` or `install.sh`
-itself, the UI will say so ("this update also changes system files") — those
-need `install.sh` re-run over SSH, since they configure things outside the
-app (sudoers, boot config, systemd units):
+If a change also touches `systemd/*` or `install.sh` itself, the UI says so
+before you click ("this update also changes system files") and, on "Update
+now", re-runs `install.sh` automatically as part of the update — apt
+packages, sudoers, systemd units, boot console settings, all reapplied with
+no SSH. It won't reboot on its own even if the boot console settings
+changed; if you want that to take effect immediately rather than at the
+next natural reboot, do it from the Power tab afterward.
+
+Worth knowing: this means anyone who can push to this repo can run
+arbitrary code as root on the Pi, unattended, via a commit. Fine for a
+single-operator frame like this one; don't add other collaborators or a
+public write-access remote without reconsidering that.
+
+The first update after upgrading to this feature is a one-time exception —
+the *old* sudoers file doesn't grant `install.sh` permission to run as root
+yet, so that step fails harmlessly (the code update still lands) and you'll
+need to run `install.sh` over SSH once by hand to pick up its own new
+permission. Every update after that is unattended:
 
 ```bash
 cd ~/posterframe
@@ -99,6 +113,10 @@ web UI itself can't be used to update.
 - **"Update now" fails or says diverged** — check `update.log`. "Diverged"
   means a tracked file was hand-edited on the Pi outside of git; resolve it
   over SSH (`git status`/`git diff` in `~/posterframe`) rather than force it.
+- **Update applied the code but not sudoers/systemd/boot settings** — check
+  `update.log` for "install.sh failed or isn't permitted yet". Expected on
+  the very first update after this feature was added (see Updating above);
+  otherwise, run `install.sh` over SSH and check its output for the real error.
 - **TMDb sync isn't picking anything up** — check `tmdb_sync.log`, and
   confirm the API key is set (web UI → TMDb tab) and at least one source
   category is enabled with a low enough popularity threshold.

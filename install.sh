@@ -3,25 +3,44 @@
 # One-time setup for the poster frame on a Raspberry Pi Zero W running
 # Raspberry Pi OS Lite (Bookworm-era, headless, no desktop).
 #
-# Run this ON THE PI, as the regular user that owns this checkout (the
-# systemd units bake that username in as the unprivileged service user).
-# Needs passwordless sudo for the user running it - apt installs, systemd
-# unit installation, the sudoers drop-in, and the boot cmdline edit all
-# need root.
-#
-#   cd ~/posterframe && ./install.sh
+# Two ways this runs:
+#   1. Interactively, as the regular user that owns this checkout (e.g.
+#      'pi'), over SSH:
+#        cd ~/posterframe && ./install.sh
+#      Needs passwordless (or session-cached) sudo - apt, systemd, the
+#      sudoers drop-in, and the boot cmdline edit all need root.
+#   2. As root via sudo, unattended, invoked by update.sh when a pulled
+#      update touches systemd/ or install.sh itself. Root is granted this
+#      one script by name (see the sudoers section below) rather than a
+#      pile of individual apt/tee/systemctl commands - deliberately: sudo's
+#      wildcard argument matching on file-writing commands like `tee` is a
+#      known path-traversal footgun, and one whitelisted script is easier
+#      to reason about than a dozen narrow ones. In this mode the pi-owned
+#      steps (venv, .env, runtime dirs) drop back down to the checkout's
+#      owner instead of leaving root-owned files behind - see AS_ROOT below.
 #
 # Safe to re-run: every step is idempotent.
+#
+# Flags:
+#   -y, --yes       Skip prompts (currently just the TMDb key prompt on a
+#                    fresh install). Does NOT imply --auto-reboot.
+#   --auto-reboot   Reboot at the end without asking. Off by default even
+#                    with -y - rebooting a wall-mounted display is a bigger
+#                    deal than skipping a text prompt, so it needs its own
+#                    opt-in. update.sh calls install.sh with -y but not
+#                    this, so an auto-triggered update never reboots the
+#                    Pi out from under whoever's looking at it.
 
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN_USER="$(id -un)"
 ASSUME_YES=0
+AUTO_REBOOT=0
 
 for arg in "$@"; do
     case "$arg" in
         -y|--yes) ASSUME_YES=1 ;;
+        --auto-reboot) AUTO_REBOOT=1 ;;
         *) echo "Unknown argument: $arg" >&2; exit 1 ;;
     esac
 done
@@ -31,7 +50,10 @@ warn() { echo "!!  $*" >&2; }
 
 confirm() {
     # confirm "question" - returns 0 (yes) unless the user types something
-    # other than y/Y, or we're non-interactive and not --yes.
+    # other than y/Y, or we're non-interactive and not --yes. NOT used for
+    # the final reboot - that has its own, deliberately separate gate
+    # (AUTO_REBOOT) so "-y" (skip benign prompts) can't accidentally reboot
+    # a wall-mounted device unattended. See --auto-reboot above.
     local prompt="$1"
     if [[ "$ASSUME_YES" == "1" ]]; then
         return 0
@@ -43,12 +65,33 @@ confirm() {
     [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-if [[ "$RUN_USER" == "root" ]]; then
-    warn "Run this as the regular user (e.g. 'pi'), not root."
-    warn "The web app and TMDb sync services run as whoever runs this script;"
-    warn "running it as root would make the systemd units run everything as root."
-    exit 1
+if [[ "$(id -u)" == "0" ]]; then
+    # Running as root (via sudo). Figure out who the unprivileged service
+    # user should be from who owns the checkout, rather than "root" - the
+    # venv, .env and runtime dirs still need to belong to that user.
+    AS_ROOT=1
+    RUN_USER="$(stat -c '%U' "$BASE_DIR")"
+    if [[ -z "$RUN_USER" || "$RUN_USER" == "root" ]]; then
+        warn "Running as root, but $BASE_DIR is root-owned so there's no"
+        warn "unprivileged user to install for. Run this as that user instead:"
+        warn "  su - pi -c '$BASE_DIR/install.sh $*'"
+        exit 1
+    fi
+else
+    AS_ROOT=0
+    RUN_USER="$(id -un)"
 fi
+
+# priv <cmd>: needs root. Already root -> run directly; otherwise escalate.
+# as_user <cmd>: must end up owned by RUN_USER. Already RUN_USER -> run
+# directly; running as root -> drop down via sudo -u (root can always do
+# this without a password, so this never needs its own sudoers entry).
+priv() {
+    if [[ "$AS_ROOT" == "1" ]]; then "$@"; else sudo "$@"; fi
+}
+as_user() {
+    if [[ "$AS_ROOT" == "1" ]]; then sudo -u "$RUN_USER" -H "$@"; else "$@"; fi
+}
 
 if [[ "$(uname -s)" != "Linux" ]] || [[ ! -e /proc/device-tree/model ]]; then
     warn "This doesn't look like a Raspberry Pi. install.sh edits system files"
@@ -57,7 +100,7 @@ if [[ "$(uname -s)" != "Linux" ]] || [[ ! -e /proc/device-tree/model ]]; then
     exit 1
 fi
 
-if ! sudo -n true 2>/dev/null; then
+if [[ "$AS_ROOT" != "1" ]] && ! sudo -n true 2>/dev/null; then
     warn "This script needs passwordless sudo for: apt, systemd, sudoers, and"
     warn "the boot cmdline. Run 'sudo -v' first, or enter your password when prompted below."
 fi
@@ -68,8 +111,8 @@ log "Installing for user '$RUN_USER' in $BASE_DIR"
 # System packages
 # ---------------------------------------------------------------------------
 log "Installing system packages (apt)"
-sudo apt-get update -qq
-sudo apt-get install -y --no-install-recommends \
+priv apt-get update -qq
+priv apt-get install -y --no-install-recommends \
     python3-venv python3-pip python3-dev build-essential \
     libjpeg-dev zlib1g-dev libopenjp2-7 libtiff6 \
     fonts-dejavu-core \
@@ -80,19 +123,19 @@ sudo apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 if [[ ! -d "$BASE_DIR/venv" ]]; then
     log "Creating virtualenv"
-    python3 -m venv "$BASE_DIR/venv"
+    as_user python3 -m venv "$BASE_DIR/venv"
 fi
 
 log "Installing Python dependencies (this can take a while on a Zero W)"
-"$BASE_DIR/venv/bin/pip" install --upgrade pip -q
-"$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" -q
+as_user "$BASE_DIR/venv/bin/pip" install --upgrade pip -q
+as_user "$BASE_DIR/venv/bin/pip" install -r "$BASE_DIR/requirements.txt" -q
 
 # ---------------------------------------------------------------------------
 # Runtime directories (the apps also create these themselves, but doing it
 # here up front avoids any first-run ambiguity about ownership)
 # ---------------------------------------------------------------------------
 log "Creating runtime directories"
-mkdir -p "$BASE_DIR/static/posters" "$BASE_DIR/originals" \
+as_user mkdir -p "$BASE_DIR/static/posters" "$BASE_DIR/originals" \
          "$BASE_DIR/prepared" "$BASE_DIR/fonts_cache"
 
 # ---------------------------------------------------------------------------
@@ -106,8 +149,8 @@ if [[ ! -f "$BASE_DIR/.env" ]]; then
         tmdb_key=""
     fi
     printf 'TMDB_API_KEY=%s\n' "$tmdb_key" > "$BASE_DIR/.env"
-    chmod 600 "$BASE_DIR/.env"
 fi
+priv chown "$RUN_USER:$RUN_USER" "$BASE_DIR/.env"
 chmod 600 "$BASE_DIR/.env"
 
 # ---------------------------------------------------------------------------
@@ -117,31 +160,33 @@ log "Installing systemd units"
 for unit in "$BASE_DIR"/systemd/*; do
     name="$(basename "$unit")"
     sed -e "s|__DIR__|$BASE_DIR|g" -e "s|__USER__|$RUN_USER|g" \
-        "$unit" | sudo tee "/etc/systemd/system/$name" > /dev/null
+        "$unit" | priv tee "/etc/systemd/system/$name" > /dev/null
 done
 
-sudo systemctl daemon-reload
+priv systemctl daemon-reload
 
 log "Enabling services"
-sudo systemctl enable posterframe-web.service
-sudo systemctl enable posterframe-slideshow.service
-sudo systemctl enable posterframe-spinner.service
-sudo systemctl enable posterframe-fetch.timer
+priv systemctl enable posterframe-web.service
+priv systemctl enable posterframe-slideshow.service
+priv systemctl enable posterframe-spinner.service
+priv systemctl enable posterframe-fetch.timer
 
 # ---------------------------------------------------------------------------
-# sudoers - grant exactly the systemctl calls the web UI needs (power
-# controls, plus the two service restarts update.sh issues after a git
-# pull), nothing else. Validated with visudo before it's installed; a bad
-# sudoers file can lock out sudo entirely.
+# sudoers - grant exactly what the web UI needs: four specific systemctl
+# calls (power controls, plus the two service restarts update.sh issues
+# after a git pull), and this script by name (so update.sh can apply a
+# pulled systemd/install.sh change unattended - see the top-of-file note).
+# Nothing else. Validated with visudo before it's installed; a bad sudoers
+# file can lock out sudo entirely.
 # ---------------------------------------------------------------------------
 log "Installing sudoers rule"
 SUDOERS_TMP="$(mktemp)"
 cat > "$SUDOERS_TMP" <<EOF
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl restart posterframe-slideshow, /usr/bin/systemctl restart posterframe-web
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot, /usr/bin/systemctl restart posterframe-slideshow, /usr/bin/systemctl restart posterframe-web, $BASE_DIR/install.sh
 EOF
 
-if sudo visudo -c -f "$SUDOERS_TMP" > /dev/null; then
-    sudo install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/posterframe
+if priv visudo -c -f "$SUDOERS_TMP" > /dev/null; then
+    priv install -m 0440 -o root -g root "$SUDOERS_TMP" /etc/sudoers.d/posterframe
 else
     warn "Generated sudoers rule failed validation - not installed."
     warn "The web UI's power/restart/update buttons won't work until this is fixed by hand."
@@ -153,7 +198,7 @@ rm -f "$SUDOERS_TMP"
 # console, and its login prompt would flash over the display.
 # ---------------------------------------------------------------------------
 log "Disabling getty on tty1"
-sudo systemctl disable --now getty@tty1.service 2>/dev/null || true
+priv systemctl disable --now getty@tty1.service 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Silence the kernel/boot console so log text doesn't draw over the spinner
@@ -175,7 +220,7 @@ elif grep -q 'systemd.show_status=0' "$CMDLINE"; then
     log "Boot console already silenced ($CMDLINE)"
 else
     log "Silencing boot console ($CMDLINE)"
-    [[ -f "$CMDLINE.orig" ]] || sudo cp "$CMDLINE" "$CMDLINE.orig"
+    [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
 
     line="$(cat "$CMDLINE")"
     # Redirect kernel console output to tty3 (off-screen) instead of tty1.
@@ -185,7 +230,7 @@ else
             line="$line $flag"
         fi
     done
-    echo "$line" | sudo tee "$CMDLINE" > /dev/null
+    echo "$line" | priv tee "$CMDLINE" > /dev/null
 fi
 
 # ---------------------------------------------------------------------------
@@ -198,8 +243,11 @@ echo
 echo "A reboot is needed to pick up the console changes and start the"
 echo "slideshow/spinner against a clean tty1."
 
-if confirm "Reboot now?"; then
-    sudo reboot
+if [[ "$AUTO_REBOOT" == "1" ]]; then
+    log "Rebooting now (--auto-reboot)"
+    priv reboot
+elif confirm "Reboot now?"; then
+    priv reboot
 else
-    echo "Reboot later with: sudo reboot"
+    echo "Reboot later with: sudo reboot, or the Power tab in the web UI."
 fi

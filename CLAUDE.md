@@ -56,10 +56,12 @@ If you add a feature, add its controls to the UI.
 `/etc/systemd/system/posterframe-slideshow.service.d/override.conf` sets
 `StandardInput/Output=tty` and `TTYPath=/dev/tty1` — required or fbi runs blind.
 
-`/etc/sudoers.d/posterframe` grants `pi` exactly four commands:
+`/etc/sudoers.d/posterframe` grants `pi` five things, NOPASSWD:
 `systemctl poweroff`, `systemctl reboot`, `systemctl restart posterframe-slideshow`,
-`systemctl restart posterframe-web` (the last one is what `update.sh` needs to
-apply a pulled code update to the running web app).
+`systemctl restart posterframe-web` (what `update.sh` needs to apply a pulled
+code update), and running `install.sh` itself (any args) as root - see "Web
+UI" gotchas below for what that last one means and why it's scoped to the
+whole script rather than install.sh's individual apt/tee/systemctl calls.
 
 ---
 
@@ -159,6 +161,7 @@ Filename prefixes carry meaning and are load-bearing:
   it's fine if not every commit is tagged - only tag the ones you'd want to
   see as "the version" in the UI.
 - **"Update now" (System tab) runs `update.sh`**: fast-forward-only `git pull`,
+  then (if `systemd/`/`install.sh` changed) re-run `install.sh -y`, then
   reinstall deps if `requirements.txt` changed, restart `posterframe-slideshow`,
   then restart `posterframe-web` last. It refuses (rather than force-merging)
   if the local branch has diverged — e.g. someone hand-edited a tracked file
@@ -176,11 +179,61 @@ Filename prefixes carry meaning and are load-bearing:
   before the client dies, so it completes regardless. Don't "fix" this by
   reordering the restarts or adding cleanup after the `restart posterframe-web`
   line — there is no "after" to reach.
-- **`update.sh` only updates code.** Changes to `systemd/*` or `install.sh`
-  itself aren't applied by a pull — those still need `install.sh` re-run over
-  SSH (the one remaining, intentionally rare exception to "no SSH needed").
-  `update.sh --check` reports `SYSTEM_CHANGES=1` when the pending pull touches
-  those paths, and the UI shows a warning, but nothing blocks the code update.
+- **A pulled `systemd/*`/`install.sh` change is applied automatically, not
+  just flagged.** `update.sh --check` reports `SYSTEM_CHANGES=1` when the
+  pending pull touches those paths so the UI can say so *before* the click,
+  but "Update now" itself runs `sudo -n install.sh -y` as part of the update
+  — apt packages, unit files, sudoers, getty, boot cmdline all get reapplied
+  unattended. It deliberately does **not** pass `--auto-reboot`, so if the
+  boot cmdline changed, a reboot (Power tab, whenever convenient) is still
+  the one manual step left. This is a real trust-model consequence, not a
+  detail: **whoever can push to this repo can now run arbitrary code as
+  root on the Pi, unattended, via a plain commit.** That's an acceptable
+  trade for a single-operator appliance (which is what this is) but would
+  not be if this repo ever gained other collaborators or a public remote
+  with write access.
+- **Why root is granted `install.sh` by *name*, not its individual
+  apt/tee/systemctl calls.** Sudoers wildcard-matches command *arguments*
+  as literal text, not resolved paths — `sudo tee /etc/systemd/system/*`
+  would also match `tee /etc/systemd/system/../shadow` textually, which
+  `tee` then happily resolves to `/etc/shadow`. Granting one script by exact
+  path sidesteps that whole class of mistake. Inside install.sh, this shows
+  up as the `AS_ROOT` dual-mode: run directly by a human (as `pi`, over
+  SSH) it still does per-line `sudo <cmd>` as before; run via
+  `sudo install.sh` (root euid) it skips the redundant `sudo` and instead
+  drops *down* to the checkout's owner (via `sudo -u`, which needs no
+  password since real root already has it) for the steps that must stay
+  user-owned — venv, `.env`, runtime dirs. Don't reintroduce a `RUN_USER ==
+  root` guard "for safety" — that's exactly the mode update.sh depends on.
+- **First auto-update after this feature ships won't fully apply itself.**
+  The *old* sudoers file (from before `install.sh` added itself to the
+  NOPASSWD list) doesn't grant the new `install.sh` line yet, so
+  `sudo -n install.sh -y` fails with a permission error on that one run.
+  `update.sh` treats this as non-fatal — the code still lands and services
+  still restart — but system-level config is unchanged until `install.sh`
+  is run over SSH once by hand. Every update after that bootstraps itself.
+- **The progress bar's "restarting" state is inferred, not reported.**
+  There is no route that tells the browser "the service is about to
+  restart" — `posterframe-web` just stops answering while systemd swaps it
+  out. The System tab's JS polls `GET /update/log` (tails `update.log`,
+  reports whether `update.sh` is still running) roughly every second; a
+  *failed* poll (connection refused, mid-restart) is what flips the UI into
+  "reconnecting", and the first poll that *succeeds again afterward* is
+  what's treated as "restart finished". The 5-second reload countdown only
+  starts at that point — deliberately not right after "download complete",
+  since restart duration varies (a plain code update restarts in under a
+  second; one that also ran `install.sh` can take minutes) and a fixed
+  countdown from an earlier point could fire before the new instance is
+  actually back up. If you touch this, keep that ordering: countdown after
+  confirmed reconnect, not instead of it.
+- **`UPDATE_STAGES` in the template and update.sh's `echo` lines are
+  coupled by string matching, not a real protocol.** The JS scans the log
+  tail for the *last* matching marker (e.g. `'Restarting slideshow'`) to
+  decide which stage to show. Changing what update.sh prints without
+  updating `UPDATE_STAGES` in `templates/index.html` (or vice versa) just
+  makes the progress bar stall on a stale label — it still degrades
+  harmlessly (worst case: bar stops advancing until the restart/reconnect
+  fires anyway), but keep the two in sync when editing either.
 
 ---
 
@@ -202,7 +255,8 @@ Working: poster upload with grain, drag reorder, TMDb sync (movies + TV, per-
 category limits, popularity filters, age-based expiry with a "still in cinemas"
 reprieve), pin-by-URL, boot logo + animated spinner, display calibration,
 custom Google Fonts, band text with release-aware status, tabbed UI with unified
-save, power controls, in-UI code updates ("Update now").
+save, power controls, in-UI code updates ("Update now") with a live
+progress bar through the restart/reconnect cycle.
 
 ### Open items
 1. **Trailer playback.** The goal is trailer on top, poster below, no gap. Not

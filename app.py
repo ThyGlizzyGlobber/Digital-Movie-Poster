@@ -925,27 +925,70 @@ def update_now():
     if not already_running:
         with open(UPDATE_LOG, "w") as log_file:
             subprocess.Popen(
-                ["timeout", "600", "bash", UPDATE_SCRIPT],
+                # 900s not 600s: a system-file update also runs install.sh
+                # (apt + pip), which needs more room than a code-only pull.
+                ["timeout", "900", "bash", UPDATE_SCRIPT],
                 cwd=BASE_DIR,
                 stdout=log_file, stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
 
-    return """<!DOCTYPE html>
+    # Best-effort peek at whether this pull also touches system files, just
+    # to set expectations - the UI already warned about this before the
+    # button was clicked, so a failure here isn't worth blocking on.
+    system_changes = False
+    try:
+        precheck = subprocess.run(
+            ["bash", UPDATE_SCRIPT, "--check"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=20,
+        )
+        system_changes = parse_update_check_output(precheck.stdout).get("SYSTEM_CHANGES") == "1"
+    except Exception:
+        pass
+
+    if system_changes:
+        reload_ms, wait_copy = 90000, (
+            "This one also applies system-level changes (install.sh runs "
+            "automatically), so it can take a few minutes - longer than a "
+            "plain code update."
+        )
+    else:
+        reload_ms, wait_copy = 25000, "This page will check back on its own in about 25 seconds."
+
+    return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Updating</title>
 <style>
-  body { background:#0a0a0b; color:#f2f2f0; font-family:-apple-system,sans-serif;
-         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-  div { text-align:center; max-width:420px; padding:0 24px; }
-  h1 { font-size:1.3rem; font-weight:600; margin:0 0 12px; }
-  p { color:#88888e; font-size:0.9rem; line-height:1.5; margin:0; }
+  body {{ background:#0a0a0b; color:#f2f2f0; font-family:-apple-system,sans-serif;
+         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }}
+  div {{ text-align:center; max-width:420px; padding:0 24px; }}
+  h1 {{ font-size:1.3rem; font-weight:600; margin:0 0 12px; }}
+  p {{ color:#88888e; font-size:0.9rem; line-height:1.5; margin:0; }}
 </style>
-<script>setTimeout(function(){ window.location.href = '/'; }, 25000);</script>
+<script>setTimeout(function(){{ window.location.href = '/'; }}, {reload_ms});</script>
 </head>
 <body><div><h1>Updating&hellip;</h1>
-<p>Pulling the latest code and restarting. This page will check back on
-its own in about 25 seconds - if the frame doesn't come back by then,
-give it a bit longer and refresh.</p></div></body></html>"""
+<p>Pulling the latest code and restarting. {wait_copy} If the frame doesn't
+come back by then, give it a bit longer and refresh.</p></div></body></html>"""
+
+
+@app.route("/update/log")
+def update_log():
+    """Polled by the System tab's progress bar while an update runs. Tails
+    update.log and reports whether update.sh is still alive - the frontend
+    infers "the service is restarting" from this request itself failing
+    (posterframe-web goes down as update.sh's last act), not from anything
+    in this response, so this route doesn't need to predict that."""
+    running = subprocess.run(
+        ["pgrep", "-f", UPDATE_SCRIPT],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+    content = ""
+    if os.path.exists(UPDATE_LOG):
+        with open(UPDATE_LOG, errors="replace") as f:
+            content = f.read()[-4000:]
+
+    return jsonify({"running": running, "content": content})
 
 
 @app.route("/reorder", methods=["POST"])

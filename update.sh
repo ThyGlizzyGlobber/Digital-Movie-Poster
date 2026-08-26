@@ -9,12 +9,20 @@
 #   ./update.sh --check   Reports what's available upstream. No changes.
 #   ./update.sh           Fast-forwards to the remote branch and restarts.
 #
-# This only updates *code*. Changes to systemd/ or install.sh itself -
-# anything install.sh applies at the system level (sudoers, boot cmdline,
-# getty) - still need install.sh re-run over SSH; that's a separate,
-# intentionally rare step. --check reports SYSTEM_CHANGES=1 when the
-# pending update touches those paths, so the web UI can warn before the
-# user updates.
+# When the pull touches systemd/ or install.sh itself, this also re-runs
+# install.sh (as root, non-interactively - see the sudoers note in
+# install.sh's own header) so the system-level bits apply too: new unit
+# files, sudoers, getty, boot cmdline. It never reboots on its own even if
+# the boot cmdline changed - see install.sh's --auto-reboot note. --check
+# reports SYSTEM_CHANGES=1 when the pending update touches those paths, so
+# the web UI can say so before the user updates.
+#
+# First run after adding this feature is a chicken-and-egg case: the old
+# sudoers file won't grant install.sh yet, so the auto-run fails with a
+# permission error. That's expected and non-fatal - the code update still
+# lands and services still restart, just once you'll see the "couldn't
+# apply system changes" note and need install.sh over SSH one last time to
+# pick up its own new sudoers rule. Every update after that is unattended.
 #
 # Runs detached from posterframe-web.service's own cgroup (launched via
 # Popen from a request handler, never moved to its own cgroup). Its last
@@ -92,10 +100,16 @@ git merge --ff-only "$upstream"
 after_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
 
 if [[ -n "$system_changes" ]]; then
-    echo "NOTE: this update touches system-level files:"
+    echo "This update touches system-level files:"
     echo "$system_changes" | sed 's/^/  /'
-    echo "The pulled code is running now, but service definitions and"
-    echo "system config are unchanged until install.sh is re-run over SSH."
+    echo "Applying them with install.sh (as root, no reboot)"
+    if sudo -n "$(pwd)/install.sh" -y; then
+        echo "install.sh applied cleanly."
+    else
+        echo "install.sh failed or isn't permitted yet (see above) - system-" >&2
+        echo "level config is unchanged. The code update below still applies;" >&2
+        echo "re-run install.sh over SSH to pick up the rest by hand." >&2
+    fi
 fi
 
 if [[ "$before_reqs" != "$after_reqs" ]]; then
