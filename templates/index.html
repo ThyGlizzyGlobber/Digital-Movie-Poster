@@ -685,6 +685,23 @@
         </section>
 
         <section class="panel">
+          <p class="panel-label">Software update</p>
+          <p class="note" style="margin-bottom:14px;">
+            {% if git_version %}
+              Running <code>v{{ git_version }}</code>{% if git_message %} &mdash; {{ git_message }}{% endif %}
+            {% else %}
+              Running <code>{{ git_sha or 'unknown' }}</code>{% if git_message %} &mdash; {{ git_message }}{% endif %}
+            {% endif %}
+          </p>
+          <div id="updateResult"></div>
+          <button type="button" class="primary" id="checkUpdateBtn" style="margin-top:0;">Check for updates</button>
+          <form action="/update" method="post" id="updateForm" style="display:none"
+                onsubmit="return confirm('Pull the latest code and restart? The web UI will be briefly unavailable while it restarts.');">
+            <button type="submit" class="primary" id="updateNowBtn">Update now</button>
+          </form>
+        </section>
+
+        <section class="panel">
           <p class="panel-label">Power</p>
           <p class="note">
             Pulling the plug while the Pi is running risks corrupting the SD card.
@@ -846,6 +863,72 @@
         .then(()=>window.location.reload());
     });
   });
+
+  // --- Software update ----------------------------------------------------
+  const checkUpdateBtn = document.getElementById('checkUpdateBtn');
+  const updateResult = document.getElementById('updateResult');
+  const updateForm = document.getElementById('updateForm');
+
+  function escapeHtml(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c=>(
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+    ));
+  }
+
+  // Prefer "v1.5.0: Fix schedule bug" (parsed from a "[v1.5.0] ..." commit
+  // title) over the raw sha/message - falls back gracefully for commits
+  // that don't follow the version-tag convention.
+  function describeCommit(version, title, message, sha){
+    if(version){
+      return 'v'+escapeHtml(version)+(title ? ': '+escapeHtml(title) : '');
+    }
+    return '&ldquo;'+escapeHtml(message)+'&rdquo; ('+escapeHtml(sha)+')';
+  }
+
+  if(checkUpdateBtn){
+    checkUpdateBtn.addEventListener('click', ()=>{
+      checkUpdateBtn.disabled = true;
+      checkUpdateBtn.textContent = 'Checking…';
+      updateResult.innerHTML = '';
+      updateForm.style.display = 'none';
+
+      fetch('/update/check').then(r=>r.json()).then(data=>{
+        checkUpdateBtn.disabled = false;
+        checkUpdateBtn.textContent = 'Check for updates';
+
+        if(!data.ok){
+          updateResult.innerHTML = '<p class="flash err">'+escapeHtml(data.error)+'</p>';
+          return;
+        }
+
+        if(data.diverged){
+          updateResult.innerHTML = '<p class="flash err">Local code has diverged from git ('
+            +data.ahead+' commit(s) not upstream) - can’t auto-update. Resolve this over SSH.</p>';
+          return;
+        }
+
+        if(data.up_to_date){
+          const current = data.current_version ? ' (v'+escapeHtml(data.current_version)+')' : '';
+          updateResult.innerHTML = '<p class="flash ok">Up to date'+current+'.</p>';
+          return;
+        }
+
+        const latest = describeCommit(data.remote_version, data.remote_title, data.remote_message, data.remote_sha);
+        let html = '<p class="flash ok">'+data.behind+' update(s) available &mdash; latest: '+latest+'</p>';
+        if(data.system_changes){
+          html += '<p class="note">This update also changes system files (systemd/install.sh). '
+            +'Updating here applies the code; re-run <code>install.sh</code> over SSH afterwards '
+            +'to apply those.</p>';
+        }
+        updateResult.innerHTML = html;
+        updateForm.style.display = 'block';
+      }).catch(()=>{
+        checkUpdateBtn.disabled = false;
+        checkUpdateBtn.textContent = 'Check for updates';
+        updateResult.innerHTML = '<p class="flash err">Couldn’t reach the update check - is the network up?</p>';
+      });
+    });
+  }
 </script>
 </body>
 </html>

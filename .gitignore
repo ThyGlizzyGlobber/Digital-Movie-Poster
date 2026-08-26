@@ -5,6 +5,7 @@
 config.json
 tmdb_tracked.json
 .last_reboot
+.update.lock
 
 # Generated / downloaded content
 static/posters/

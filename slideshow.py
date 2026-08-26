@@ -383,6 +383,7 @@ def main():
     applied_signature = None
     spinner_stopped = False
     display_on = True
+    force_rebuild = False
 
     try:
         while True:
@@ -401,15 +402,28 @@ def main():
                     # Forget what was applied so waking triggers a fresh
                     # rebuild rather than assuming the screen still holds it
                     applied_signature = None
+                    # The spinner is a separate process that redraws itself
+                    # in a loop; if it's still running (e.g. the Pi booted
+                    # straight into an off-window, before any rebuild ever
+                    # stopped it) it will keep painting over the blanked
+                    # screen forever. Stop it here too, not just after a
+                    # successful on-period rebuild.
+                    if not spinner_stopped:
+                        stop_spinner()
+                        spinner_stopped = True
                     set_display_power(False)
                     display_on = False
                 time.sleep(POLL_SECONDS)
                 continue
 
             if not display_on:
-                log("Scheduled on period - turning display on")
+                log("Scheduled on period - waking display, forcing rebuild")
                 set_display_power(True)
                 display_on = True
+                # Don't rely solely on the signature diff below to notice
+                # the wake - force the next rebuild explicitly so a stale
+                # fbi/spinner frame never gets left on screen.
+                force_rebuild = True
 
             order = config.get("order", [])
             interval = max(5, config.get("interval_seconds", DEFAULT_INTERVAL))
@@ -456,7 +470,7 @@ def main():
                 time.sleep(POLL_SECONDS)
                 continue
 
-            if signature != applied_signature or process_died:
+            if signature != applied_signature or process_died or force_rebuild:
                 log(f"Rebuilding display: {len(order)} poster(s), {interval}s each")
 
                 paths = build_display_list(
@@ -479,6 +493,7 @@ def main():
                     spinner_stopped = True
 
                 applied_signature = signature
+                force_rebuild = False
 
             time.sleep(POLL_SECONDS)
 

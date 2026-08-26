@@ -19,6 +19,8 @@ FONT_CACHE_DIR = os.path.join(BASE_DIR, "fonts_cache")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 TMDB_SYNC_LOG = os.path.join(BASE_DIR, "tmdb_sync.log")
+UPDATE_SCRIPT = os.path.join(BASE_DIR, "update.sh")
+UPDATE_LOG = os.path.join(BASE_DIR, "update.log")
 BOOT_IMAGE_PATH = os.path.join(BASE_DIR, "static", "boot_image.png")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 DEFAULT_INTERVAL_SECONDS = 900  # 15 minutes
@@ -28,6 +30,10 @@ DEFAULT_GRAIN_INTENSITY = 0.08
 DEFAULT_POSTER_MAX_WIDTH = 1600
 HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+# Commit title convention: "[v1.4.0] Fix schedule wake bug". update.sh only
+# ever hands back the raw subject line (CURRENT_MSG/REMOTE_MSG) - parsing
+# happens here so there's one implementation of the convention, not two.
+VERSION_TAG_RE = re.compile(r"^\[v(\d+\.\d+\.\d+)\]\s*(.*)$", re.IGNORECASE)
 
 # Must stay in step with SOURCES in fetch_posters.py
 TMDB_SOURCE_KEYS = [
@@ -56,6 +62,47 @@ def load_env_file(path):
                 key, _, value = line.partition("=")
                 env[key.strip()] = value.strip()
     return env
+
+
+def parse_version_title(raw_message):
+    """Splits a "[v1.4.0] Fix schedule wake bug" commit subject into
+    (version, title). Falls back to (None, raw_message) for commits that
+    don't follow the convention - old history, WIP commits, etc."""
+    match = VERSION_TAG_RE.match(raw_message or "")
+    if match:
+        return match.group(1), match.group(2)
+    return None, raw_message
+
+
+def get_git_info():
+    """Currently-running commit, for the System tab. Local only (no
+    fetch/network) so page loads stay instant - the network-dependent
+    "is an update available" check is a separate call the UI makes on
+    demand, hitting update.sh --check."""
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=5,
+        )
+        message = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=5,
+        )
+        if sha.returncode != 0:
+            return None, None, None
+        version, title = parse_version_title(message.stdout.strip())
+        return sha.stdout.strip(), title, version
+    except Exception:
+        return None, None, None
+
+
+def parse_update_check_output(text):
+    info = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            info[key.strip()] = value.strip()
+    return info
 
 
 def allowed_file(filename):
@@ -420,6 +467,7 @@ def index():
     tmdb_min_popularity = config.get("tmdb_min_popularity", 0)
     tmdb_min_popularity_upcoming = config.get("tmdb_min_popularity_upcoming", 10)
     tmdb_upcoming_months = config.get("tmdb_upcoming_months", 12)
+    git_sha, git_message, git_version = get_git_info()
 
     return render_template(
         "index.html",
@@ -470,6 +518,9 @@ def index():
         tmdb_min_popularity=tmdb_min_popularity,
         tmdb_min_popularity_upcoming=tmdb_min_popularity_upcoming,
         tmdb_upcoming_months=tmdb_upcoming_months,
+        git_sha=git_sha,
+        git_message=git_message,
+        git_version=git_version,
     )
 
 
@@ -808,6 +859,93 @@ the sudoers rule hasn't been set up yet.</p>
   p {{ color:#88888e; font-size:0.9rem; line-height:1.5; margin:0; }}
 </style></head>
 <body><div><h1>{verb}&hellip;</h1><p>{detail}</p></div></body></html>"""
+
+
+@app.route("/update/check")
+def update_check():
+    """Whether a newer commit exists upstream. Read-only - runs `git
+    fetch` but never merges anything. Network-bound (unlike get_git_info,
+    used for the always-on "currently running" line), so this is only
+    called when the user clicks "Check for updates", not on page load."""
+    if not os.path.exists(UPDATE_SCRIPT):
+        return jsonify({"ok": False, "error": "update.sh is missing"}), 500
+
+    try:
+        result = subprocess.run(
+            ["bash", UPDATE_SCRIPT, "--check"],
+            cwd=BASE_DIR, capture_output=True, text=True, timeout=45,
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Timed out reaching the git remote"}), 504
+
+    if result.returncode != 0:
+        lines = (result.stderr or result.stdout or "git check failed").strip().splitlines()
+        return jsonify({"ok": False, "error": lines[-1] if lines else "git check failed"}), 500
+
+    info = parse_update_check_output(result.stdout)
+    behind = int(info.get("BEHIND") or 0)
+    ahead = int(info.get("AHEAD") or 0)
+    current_version, current_title = parse_version_title(info.get("CURRENT_MSG"))
+    remote_version, remote_title = parse_version_title(info.get("REMOTE_MSG"))
+
+    return jsonify({
+        "ok": True,
+        "current_sha": info.get("CURRENT_SHA"),
+        "current_message": info.get("CURRENT_MSG"),
+        "current_version": current_version,
+        "current_title": current_title,
+        "remote_sha": info.get("REMOTE_SHA"),
+        "remote_message": info.get("REMOTE_MSG"),
+        "remote_version": remote_version,
+        "remote_title": remote_title,
+        "behind": behind,
+        "ahead": ahead,
+        "up_to_date": behind == 0,
+        "diverged": ahead > 0,
+        "system_changes": info.get("SYSTEM_CHANGES") == "1",
+    })
+
+
+@app.route("/update", methods=["POST"])
+def update_now():
+    """Pulls latest and restarts services - the actual "Update now" action.
+
+    Runs update.sh detached and returns a standby page immediately, since
+    the last thing update.sh does is restart posterframe-web itself. See
+    update.sh's own comments for why that's safe despite killing this
+    request's own process tree."""
+    if not os.path.exists(UPDATE_SCRIPT):
+        return redirect(url_for("index"))
+
+    already_running = subprocess.run(
+        ["pgrep", "-f", UPDATE_SCRIPT],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode == 0
+
+    if not already_running:
+        with open(UPDATE_LOG, "w") as log_file:
+            subprocess.Popen(
+                ["timeout", "600", "bash", UPDATE_SCRIPT],
+                cwd=BASE_DIR,
+                stdout=log_file, stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+    return """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Updating</title>
+<style>
+  body { background:#0a0a0b; color:#f2f2f0; font-family:-apple-system,sans-serif;
+         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+  div { text-align:center; max-width:420px; padding:0 24px; }
+  h1 { font-size:1.3rem; font-weight:600; margin:0 0 12px; }
+  p { color:#88888e; font-size:0.9rem; line-height:1.5; margin:0; }
+</style>
+<script>setTimeout(function(){ window.location.href = '/'; }, 25000);</script>
+</head>
+<body><div><h1>Updating&hellip;</h1>
+<p>Pulling the latest code and restarting. This page will check back on
+its own in about 25 seconds - if the frame doesn't come back by then,
+give it a bit longer and refresh.</p></div></body></html>"""
 
 
 @app.route("/reorder", methods=["POST"])

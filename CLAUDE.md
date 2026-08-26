@@ -29,6 +29,10 @@ If you add a feature, add its controls to the UI.
 ├── slideshow.py         # display loop: composites posters, drives fbi
 ├── spinner.py           # boot splash + loading spinner, writes to /dev/fb0
 ├── fetch_posters.py     # TMDb sync (run by timer or "Sync now")
+├── install.sh           # one-time SSH bootstrap - system packages, units,
+│                        #   sudoers, boot cmdline. Rare to re-run.
+├── update.sh            # git pull + service restart - what "Update now"
+│                        #   in the web UI runs. See Web UI gotchas below.
 ├── templates/index.html # entire UI, single file, tabbed
 ├── config.json          # ALL state. Single source of truth.
 ├── .env                 # TMDB_API_KEY (chmod 600, not in git)
@@ -37,7 +41,8 @@ If you add a feature, add its controls to the UI.
 ├── prepared/            # display-ready composites (regenerated, disposable)
 ├── fonts_cache/         # downloaded Google Font TTFs
 ├── slideshow.log        # slideshow output (NOT journald — see gotcha below)
-└── tmdb_sync.log        # manual sync output
+├── tmdb_sync.log        # manual sync output
+└── update.log           # output of the last "Update now" run
 ```
 
 ### systemd units
@@ -51,8 +56,10 @@ If you add a feature, add its controls to the UI.
 `/etc/systemd/system/posterframe-slideshow.service.d/override.conf` sets
 `StandardInput/Output=tty` and `TTYPath=/dev/tty1` — required or fbi runs blind.
 
-`/etc/sudoers.d/posterframe` grants `pi` exactly three commands:
-`systemctl poweroff`, `systemctl reboot`, `systemctl restart posterframe-slideshow`.
+`/etc/sudoers.d/posterframe` grants `pi` exactly four commands:
+`systemctl poweroff`, `systemctl reboot`, `systemctl restart posterframe-slideshow`,
+`systemctl restart posterframe-web` (the last one is what `update.sh` needs to
+apply a pulled code update to the running web app).
 
 ---
 
@@ -103,9 +110,14 @@ Filename prefixes carry meaning and are load-bearing:
 - **`vcgencmd display_power` does nothing under KMS/DRM** and still returns
   success, so its exit code is worthless. The overnight schedule therefore only
   paints the framebuffer black — it does not save backlight hours.
-- **Known bug:** the schedule's wake path doesn't reliably restart fbi, leaving
-  a stuck spinner. Currently the schedule should be left OFF. Fix = force a
-  rebuild on wake rather than relying on the signature changing.
+- **Fixed:** the schedule's wake path used to leave a stuck spinner — if the
+  Pi booted (or the service restarted) straight into an off-window, the boot
+  spinner service was never stopped, so it kept redrawing over the blanked
+  framebuffer for the whole window. `slideshow.py` now stops the spinner as
+  soon as it decides the display should be off (not just after a successful
+  on-period rebuild), and wake sets an explicit `force_rebuild` flag instead
+  of relying only on the signature diff. Re-enable `schedule_enabled` in the
+  UI to use it again.
 
 ### TMDb
 - **Only `w780` and `original` exist** for posters. There is no `w1280` or
@@ -137,6 +149,38 @@ Filename prefixes carry meaning and are load-bearing:
   Movies/TV toggle preserves both sides' settings.
 - Reordering is disabled while a filter is active: a filtered drag would submit
   only visible rows and silently drop the rest from the rotation.
+- **Commit title convention: `[v1.4.0] Fix schedule wake bug`.** The System
+  tab parses this (`VERSION_TAG_RE` / `parse_version_title()` in app.py) to
+  show "Running v1.4.0 — Fix schedule wake bug" instead of a raw sha, and so
+  "Check for updates" can say "v1.5.0: Add trailer support" instead of just a
+  commit count. Only app.py parses it — `update.sh` always hands back the raw
+  subject line, so there's one implementation of the convention, not two.
+  Commits that don't follow it degrade gracefully to sha + full message, so
+  it's fine if not every commit is tagged - only tag the ones you'd want to
+  see as "the version" in the UI.
+- **"Update now" (System tab) runs `update.sh`**: fast-forward-only `git pull`,
+  reinstall deps if `requirements.txt` changed, restart `posterframe-slideshow`,
+  then restart `posterframe-web` last. It refuses (rather than force-merging)
+  if the local branch has diverged — e.g. someone hand-edited a tracked file
+  on the Pi — so it never silently discards work.
+- **The updater's own process gets killed by its last step, on purpose.**
+  `/update` launches `update.sh` detached via `Popen(start_new_session=True)`,
+  but `start_new_session` only escapes the OS session/process group — it does
+  **not** move the process to a different systemd cgroup. `update.sh` is still
+  in `posterframe-web.service`'s cgroup, so when its final line runs
+  `systemctl restart posterframe-web`, systemd's default `KillMode=control-group`
+  SIGTERMs everything in that cgroup — including `update.sh` itself — as part
+  of tearing the old instance down. That's fine: by that point the pull,
+  dependency install, and slideshow restart have already happened and been
+  logged to `update.log`; the restart job is already handed to systemd (PID 1)
+  before the client dies, so it completes regardless. Don't "fix" this by
+  reordering the restarts or adding cleanup after the `restart posterframe-web`
+  line — there is no "after" to reach.
+- **`update.sh` only updates code.** Changes to `systemd/*` or `install.sh`
+  itself aren't applied by a pull — those still need `install.sh` re-run over
+  SSH (the one remaining, intentionally rare exception to "no SSH needed").
+  `update.sh --check` reports `SYSTEM_CHANGES=1` when the pending pull touches
+  those paths, and the UI shows a warning, but nothing blocks the code update.
 
 ---
 
@@ -158,21 +202,20 @@ Working: poster upload with grain, drag reorder, TMDb sync (movies + TV, per-
 category limits, popularity filters, age-based expiry with a "still in cinemas"
 reprieve), pin-by-URL, boot logo + animated spinner, display calibration,
 custom Google Fonts, band text with release-aware status, tabbed UI with unified
-save, power controls.
+save, power controls, in-UI code updates ("Update now").
 
 ### Open items
-1. **Schedule wake bug** (above) — schedule is off until fixed.
-2. **Trailer playback.** The goal is trailer on top, poster below, no gap. Not
+1. **Trailer playback.** The goal is trailer on top, poster below, no gap. Not
    feasible on a Zero W or on a bare framebuffer — needs a **Pi 5** and a
    browser kiosk, where the layout is trivial CSS. This would replace
    `slideshow.py` and `spinner.py` entirely; the web UI, TMDb sync, grain
    pipeline and config all survive unchanged. Note TMDb only supplies YouTube
    IDs, not video files, so sourcing is unsolved.
-3. **Pi 5 migration.** Fixes the 90s boot, ~13s/poster grain, and sync timeouts.
+2. **Pi 5 migration.** Fixes the 90s boot, ~13s/poster grain, and sync timeouts.
    Caveat: Pi 5 has **no H.264 hardware decoder** (HEVC only), but its CPU
    software-decodes H.264 faster than the Pi 4's hardware could, without the
    1080p cap.
-4. **Final panel + frame.** ~900mm portrait ≈ 40–43" 16:9. Avoid OLED — static
+3. **Final panel + frame.** ~900mm portrait ≈ 40–43" 16:9. Avoid OLED — static
    posters for 15min at a time is a burn-in worst case. Set **Display
    resolution** in the UI to match, and **Working width** to the screen's short
    edge.
