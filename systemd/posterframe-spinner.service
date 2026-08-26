@@ -1,0 +1,15 @@
+[Unit]
+Description=Poster frame loading spinner
+DefaultDependencies=no
+After=local-fs.target
+Before=posterframe-slideshow.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/venv/bin/python3 __DIR__/spinner.py
+Restart=no
+
+[Install]
+WantedBy=sysinit.target

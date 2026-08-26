@@ -1,0 +1,12 @@
+[Unit]
+Description=Fetch movie posters from TMDb
+After=network-online.target posterframe-web.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=__USER__
+WorkingDirectory=__DIR__
+EnvironmentFile=__DIR__/.env
+Environment=POSTERFRAME_TRIGGER=schedule
+ExecStart=__DIR__/venv/bin/python3 __DIR__/fetch_posters.py

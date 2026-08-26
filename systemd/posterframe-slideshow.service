@@ -1,0 +1,16 @@
+[Unit]
+Description=Poster frame slideshow display
+After=multi-user.target
+
+[Service]
+User=root
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/venv/bin/python3 __DIR__/slideshow.py
+Restart=always
+RestartSec=5
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=multi-user.target

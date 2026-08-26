@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Poster Frame</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#0a0a0b; --surface:#141416; --border:#28282c;
+    --text:#f2f2f0; --text-muted:#88888e;
+    --accent:{{ accent_color }}; --accent-dim:{{ accent_dim }};
+    --accent-hover:{{ accent_hover }}; --accent-text:{{ accent_text }};
+    --danger:#e5484d; --danger-dim:#7a2a2c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font-family:'Inter',-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+  .shell{max-width:1000px;margin:0 auto;padding:0 20px 120px}
+  header{padding:32px 0 20px}
+  h1{font-size:1.4rem;font-weight:600;letter-spacing:-.01em;margin:0}
+  .subtitle{font-family:'JetBrains Mono',monospace;font-size:.72rem;
+            letter-spacing:.06em;color:var(--text-muted);margin-top:4px}
+  hr{border:none;border-top:1px solid var(--border);margin:0 0 24px}
+  .layout{display:flex;gap:24px;align-items:flex-start}
+  nav.tabs{width:168px;flex-shrink:0;display:flex;flex-direction:column;gap:2px;
+           position:sticky;top:20px}
+  nav.tabs button{background:none;border:none;text-align:left;color:var(--text-muted);
+    font-family:'Inter',sans-serif;font-size:.88rem;font-weight:500;padding:10px 12px;
+    border-radius:8px;cursor:pointer;border-left:2px solid transparent}
+  nav.tabs button:hover{color:var(--text);background:var(--surface)}
+  nav.tabs button.active{color:var(--text);background:var(--surface);border-left-color:var(--accent)}
+  .content{flex:1;min-width:0}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  section.panel{background:var(--surface);border:1px solid var(--border);
+                border-radius:12px;padding:20px;margin-bottom:20px}
+  .panel-label{font-size:.72rem;font-weight:600;letter-spacing:.08em;
+               text-transform:uppercase;color:var(--text-muted);margin:0 0 16px}
+  .field-group{margin-bottom:18px}
+  .field-group:last-child{margin-bottom:0}
+  .field-label{font-size:.82rem;color:var(--text-muted);display:flex;
+               justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .field-label .val{font-family:'JetBrains Mono',monospace;color:var(--text);font-size:.8rem}
+  .color-row{display:flex;align-items:center;gap:10px}
+  .checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;
+                font-size:.85rem;color:var(--text-muted)}
+  .checkbox-row input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+  .font-status{font-size:.75rem;margin-top:6px}
+  .font-status.ok{color:var(--text-muted)}
+  .font-status.error{color:var(--danger)}
+  .note{font-size:.78rem;color:var(--text-muted);line-height:1.5;margin:0 0 16px}
+  input[type=color]{-webkit-appearance:none;appearance:none;width:44px;height:44px;padding:0;
+    border:1px solid var(--border);border-radius:8px;background:none;cursor:pointer;flex-shrink:0}
+  input[type=color]::-webkit-color-swatch-wrapper{padding:3px}
+  input[type=color]::-webkit-color-swatch{border:none;border-radius:5px}
+  input[type=color]::-moz-color-swatch{border:none;border-radius:5px}
+  input[type=text],input[type=time],input[type=number],select{
+    color:var(--text);font-family:'JetBrains Mono',monospace;font-size:.85rem;
+    padding:11px 12px;border:1px solid var(--border);border-radius:8px;
+    background:var(--bg);width:100%}
+  select{font-family:'Inter',sans-serif;font-size:.88rem}
+  input.hex-input{flex:1;text-transform:uppercase}
+  input[type=file]{width:100%;color:var(--text-muted);font-family:'Inter',sans-serif;
+    font-size:.85rem;padding:14px;border:1.5px dashed var(--border);border-radius:8px;
+    background:var(--bg);margin-bottom:18px}
+  input[type=file]::file-selector-button{background:var(--accent);color:var(--accent-text);
+    border:none;padding:8px 14px;border-radius:5px;font-weight:600;margin-right:12px;cursor:pointer}
+  input[type=range]{width:100%;-webkit-appearance:none;height:4px;
+    background:var(--border);border-radius:2px;padding:0;border:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    border-radius:50%;background:var(--accent);cursor:pointer;border:2px solid var(--bg)}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;
+    background:var(--accent);cursor:pointer;border:none}
+  input:focus-visible,select:focus-visible,button:focus-visible{
+    outline:2px solid var(--accent);outline-offset:2px}
+  button.primary{width:100%;background:var(--accent);color:var(--accent-text);border:none;
+    padding:12px;font-family:'Inter',sans-serif;font-weight:600;font-size:.88rem;
+    border-radius:8px;cursor:pointer;margin-top:18px}
+  button.primary:hover{background:var(--accent-hover)}
+  button.danger{width:100%;background:none;color:var(--danger);
+    border:1px solid var(--danger-dim);padding:12px;font-family:'Inter',sans-serif;
+    font-weight:600;font-size:.88rem;border-radius:8px;cursor:pointer;margin-top:12px}
+  button.danger:hover{background:var(--danger-dim);color:var(--text)}
+  .poster-row{display:flex;align-items:center;gap:12px;background:var(--surface);
+    border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+  .poster-row.sortable-ghost{opacity:.35}
+  .drag-handle{width:14px;height:22px;padding:10px 8px;box-sizing:content-box;flex-shrink:0;
+    cursor:grab;touch-action:none;opacity:.6;
+    background-image:radial-gradient(circle,var(--text-muted) 1.4px,transparent 1.5px);
+    background-size:7px 7px;background-repeat:repeat;
+    background-origin:content-box;background-clip:content-box}
+  .position{font-family:'JetBrains Mono',monospace;color:var(--text-muted);
+            font-size:.78rem;width:18px;flex-shrink:0}
+  .poster-row img{width:42px;height:60px;object-fit:cover;border-radius:4px;
+                  border:1px solid var(--border);flex-shrink:0}
+  .poster-name{flex:1;font-family:'JetBrains Mono',monospace;font-size:.76rem;
+    color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{font-size:.62rem;letter-spacing:.06em;text-transform:uppercase;
+    padding:2px 6px;border-radius:4px;border:1px solid var(--border);
+    color:var(--text-muted);flex-shrink:0;white-space:nowrap}
+  .badge.showing{color:#7ad19a;border-color:rgba(122,209,154,.35)}
+  .badge.upcoming{color:var(--accent);border-color:var(--accent-dim)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .chips button{background:none;border:1px solid var(--border);color:var(--text-muted);
+    font-family:'Inter',sans-serif;font-size:.78rem;padding:6px 12px;
+    border-radius:999px;cursor:pointer}
+  .chips button:hover{color:var(--text)}
+  .chips button.active{background:var(--accent);color:var(--accent-text);
+    border-color:var(--accent)}
+  .filter-hint{font-size:.75rem;color:var(--text-muted);margin:0 0 12px}
+  .delete-btn{background:none;border:1px solid var(--border);color:var(--danger);
+    width:34px;height:34px;border-radius:6px;font-size:1rem;line-height:1;
+    cursor:pointer;flex-shrink:0}
+  .delete-btn:hover{background:var(--danger-dim);border-color:var(--danger-dim);color:var(--text)}
+  .empty{text-align:center;color:var(--text-muted);font-size:.85rem;padding:36px 20px;
+    border:1.5px dashed var(--border);border-radius:10px}
+  .flash{padding:12px 14px;border-radius:8px;font-size:.83rem;margin-bottom:16px}
+  .flash.ok{background:rgba(80,200,120,.12);color:#7ad19a;border:1px solid rgba(80,200,120,.3)}
+  .flash.err{background:rgba(229,72,77,.12);color:var(--danger);border:1px solid var(--danger-dim)}
+  .savebar{position:fixed;right:24px;bottom:24px;z-index:50;display:flex;
+    align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:10px 12px 10px 16px;box-shadow:0 8px 28px rgba(0,0,0,.5)}
+  .savebar .status{font-size:.8rem;color:var(--text-muted);white-space:nowrap}
+  .savebar button{background:var(--accent);color:var(--accent-text);border:none;
+    padding:10px 18px;font-family:'Inter',sans-serif;font-weight:600;font-size:.85rem;
+    border-radius:8px;cursor:pointer}
+  .savebar button:hover{background:var(--accent-hover)}
+  .savebar button:disabled{background:var(--border);color:var(--text-muted);cursor:default}
+  .savebar.dirty .status{color:var(--accent)}
+  @media (max-width:720px){
+    .layout{flex-direction:column;gap:16px}
+    nav.tabs{width:100%;flex-direction:row;position:static;overflow-x:auto;gap:4px;padding-bottom:4px}
+    nav.tabs button{border-left:none;border-bottom:2px solid transparent;
+      white-space:nowrap;border-radius:8px 8px 0 0}
+    nav.tabs button.active{border-left:none;border-bottom-color:var(--accent)}
+    .savebar{left:16px;right:16px;bottom:16px;justify-content:space-between}
+  }
+</style>
+</head>
+<body>
+
+<!-- All settings inputs below reference this via form="settingsForm".
+     That avoids nesting forms (illegal in HTML) while letting one save
+     button submit every setting across every tab at once. -->
+<form id="settingsForm" action="/settings" method="post"></form>
+<input type="hidden" name="_schedule_form" value="1" form="settingsForm">
+<input type="hidden" name="_tmdb_form" value="1" form="settingsForm">
+
+<div class="shell">
+  <header>
+    <h1>Poster Frame</h1>
+    <div class="subtitle">{{ posters|length }} POSTER{{ 'S' if posters|length != 1 else '' }}</div>
+  </header>
+  <hr>
+
+  <div class="layout">
+    <nav class="tabs" id="tabNav">
+      <button type="button" data-tab="posters" class="active">Posters</button>
+      <button type="button" data-tab="display">Display</button>
+      <button type="button" data-tab="boot">Boot screen</button>
+      <button type="button" data-tab="schedule">Schedule</button>
+      <button type="button" data-tab="tmdb">TMDb</button>
+      <button type="button" data-tab="system">System</button>
+    </nav>
+
+    <div class="content">
+
+      <!-- POSTERS -->
+      <div class="tab-panel active" data-panel="posters">
+        <section class="panel">
+          <p class="panel-label">Add a poster</p>
+          <form action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="poster" accept="image/png, image/jpeg" required>
+            <button type="submit" class="primary" style="margin-top:0;">Add poster</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Poster quality</p>
+          <div class="field-group">
+            <label for="poster_max_width" class="field-label">Working width (px)</label>
+            <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width }}" form="settingsForm">
+            <p class="note" style="margin:8px 0 0;">
+              Posters are downloaded at full resolution and kept that way, but
+              scaled to this width before the grain is applied. Match it to your
+              screen's short edge or a little above &mdash; larger just costs
+              processing time. After changing it, apply the grain below to
+              re-process everything at the new size.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Grain intensity</p>
+          <form action="/regrain" method="post">
+            <div class="field-group">
+              <div class="field-label"><span>Intensity</span><span class="val" id="grainVal">{{ grain_intensity }}</span></div>
+              <input type="range" name="grain_intensity" min="0" max="0.3" step="0.01" value="{{ grain_intensity }}"
+                     oninput="document.getElementById('grainVal').textContent=this.value">
+            </div>
+            <button type="submit" class="primary">Apply to all posters</button>
+          </form>
+          <p class="note" style="margin:14px 0 0;">
+            Re-processes every poster from its untouched original, so this is
+            non-destructive and repeatable.
+          </p>
+        </section>
+
+        <p class="panel-label">Rotation &mdash; drag to reorder</p>
+
+        <div class="chips" id="posterFilters">
+          <button type="button" data-filter="all" class="active">All ({{ posters|length }})</button>
+          <button type="button" data-filter="showing">Now showing ({{ posters|selectattr('status','equalto','showing')|list|length }})</button>
+          <button type="button" data-filter="upcoming">Coming soon ({{ posters|selectattr('status','equalto','upcoming')|list|length }})</button>
+          <button type="button" data-filter="pinned">Pinned ({{ posters|selectattr('kind','equalto','pinned')|list|length }})</button>
+          <button type="button" data-filter="manual">Uploaded ({{ posters|selectattr('kind','equalto','manual')|list|length }})</button>
+        </div>
+
+        <p class="filter-hint" id="filterHint" style="display:none;">
+          Reordering is disabled while a filter is active &mdash; switch back to All to drag.
+        </p>
+
+        <div id="posterList">
+          {% for poster in posters %}
+          <div class="poster-row" data-filename="{{ poster.filename }}"
+               data-kind="{{ poster.kind }}" data-status="{{ poster.status }}">
+            <span class="drag-handle"></span>
+            <span class="position">{{ loop.index }}</span>
+            <img src="{{ url_for('static', filename='posters/' + poster.filename) }}" alt="">
+            <span class="poster-name">{{ poster.title or poster.filename }}</span>
+            {% if poster.status == 'showing' %}<span class="badge showing">Now showing</span>
+            {% elif poster.status == 'upcoming' %}<span class="badge upcoming">Coming soon</span>{% endif %}
+            {% if poster.kind == 'pinned' %}<span class="badge">Pinned</span>
+            {% elif poster.kind == 'manual' %}<span class="badge">Uploaded</span>{% endif %}
+            <button type="button" class="delete-btn" data-filename="{{ poster.filename }}" title="Remove">&times;</button>
+          </div>
+          {% else %}
+          <div class="empty">No posters yet. Add your first one above.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- DISPLAY -->
+      <div class="tab-panel" data-panel="display">
+        <section class="panel">
+          <p class="panel-label">Display settings</p>
+
+          <div class="field-group">
+            <label for="interval_minutes" class="field-label">Minutes between posters</label>
+            <input type="number" id="interval_minutes" name="interval_minutes" min="0.1" step="any" value="{{ interval_minutes }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <label for="rotation_degrees" class="field-label">Screen rotation</label>
+            <select id="rotation_degrees" name="rotation_degrees" form="settingsForm">
+              <option value="0" {{ 'selected' if rotation_degrees == 0 else '' }}>0&deg; (landscape)</option>
+              <option value="90" {{ 'selected' if rotation_degrees == 90 else '' }}>90&deg; (portrait)</option>
+              <option value="180" {{ 'selected' if rotation_degrees == 180 else '' }}>180&deg; (upside down)</option>
+              <option value="270" {{ 'selected' if rotation_degrees == 270 else '' }}>270&deg; (portrait, other way)</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Brightness</span><span class="val" id="brightnessVal">{{ brightness_pct }}%</span></div>
+            <input type="range" name="brightness_pct" min="50" max="150" step="5" value="{{ brightness_pct }}" form="settingsForm"
+                   oninput="document.getElementById('brightnessVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Contrast</span><span class="val" id="contrastVal">{{ contrast_pct }}%</span></div>
+            <input type="range" name="contrast_pct" min="50" max="150" step="5" value="{{ contrast_pct }}" form="settingsForm"
+                   oninput="document.getElementById('contrastVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Saturation</span><span class="val" id="saturationVal">{{ saturation_pct }}%</span></div>
+            <input type="range" name="saturation_pct" min="0" max="200" step="5" value="{{ saturation_pct }}" form="settingsForm"
+                   oninput="document.getElementById('saturationVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Display resolution (px)</label>
+            <div class="color-row">
+              <input type="number" name="display_width" min="100" max="8000" value="{{ display_width }}" placeholder="Width" form="settingsForm">
+              <input type="number" name="display_height" min="100" max="8000" value="{{ display_height }}" placeholder="Height" form="settingsForm">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="poster_position" class="field-label">Poster position</label>
+            <select id="poster_position" name="poster_position" form="settingsForm">
+              <option value="top" {{ 'selected' if poster_position == 'top' else '' }}>Top</option>
+              <option value="center" {{ 'selected' if poster_position == 'center' else '' }}>Center</option>
+              <option value="bottom" {{ 'selected' if poster_position == 'bottom' else '' }}>Bottom</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="top_band_content" class="field-label">Top label content</label>
+            <select id="top_band_content" name="top_band_content" form="settingsForm"
+                    onchange="document.getElementById('topCustomWrap').style.display=this.value==='custom'?'block':'none'">
+              <option value="none" {{ 'selected' if top_band_content == 'none' else '' }}>None</option>
+              <option value="status" {{ 'selected' if top_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+              <option value="date" {{ 'selected' if top_band_content == 'date' else '' }}>Release date</option>
+              <option value="custom" {{ 'selected' if top_band_content == 'custom' else '' }}>Custom text</option>
+            </select>
+            <div id="topCustomWrap" style="{{ '' if top_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
+              <input type="text" name="top_custom_text" value="{{ top_custom_text }}" placeholder="Text for the top band" maxlength="60" form="settingsForm">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="bottom_band_content" class="field-label">Bottom label content</label>
+            <select id="bottom_band_content" name="bottom_band_content" form="settingsForm"
+                    onchange="document.getElementById('bottomCustomWrap').style.display=this.value==='custom'?'block':'none'">
+              <option value="none" {{ 'selected' if bottom_band_content == 'none' else '' }}>None</option>
+              <option value="status" {{ 'selected' if bottom_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+              <option value="date" {{ 'selected' if bottom_band_content == 'date' else '' }}>Release date</option>
+              <option value="custom" {{ 'selected' if bottom_band_content == 'custom' else '' }}>Custom text</option>
+            </select>
+            <div id="bottomCustomWrap" style="{{ '' if bottom_band_content == 'custom' else 'display:none;' }}margin-top:10px;">
+              <input type="text" name="bottom_custom_text" value="{{ bottom_custom_text }}" placeholder="Text for the bottom band" maxlength="60" form="settingsForm">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Text size</span><span class="val" id="textSizeVal">{{ text_size_pct }}%</span></div>
+            <input type="range" name="text_size_pct" min="50" max="200" step="5" value="{{ text_size_pct }}" form="settingsForm"
+                   oninput="document.getElementById('textSizeVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <label for="text_color" class="field-label">Text colour</label>
+            <div class="color-row">
+              <input type="color" id="text_color" name="text_color" value="{{ text_color }}" form="settingsForm"
+                     oninput="document.getElementById('text_color_hex').value=this.value">
+              <input type="text" id="text_color_hex" class="hex-input" value="{{ text_color }}" maxlength="7"
+                     oninput="document.getElementById('text_color').value=this.value">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="band_background_color" class="field-label">Background colour</label>
+            <div class="color-row">
+              <input type="color" id="band_background_color" name="band_background_color" value="{{ band_bg_color }}" form="settingsForm"
+                     oninput="document.getElementById('band_bg_hex').value=this.value">
+              <input type="text" id="band_bg_hex" class="hex-input" value="{{ band_bg_color }}" maxlength="7"
+                     oninput="document.getElementById('band_background_color').value=this.value">
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="display_font_family" class="field-label">Display font (Google Fonts name)</label>
+            <input type="text" id="display_font_family" name="display_font_family" value="{{ display_font_family }}" placeholder="e.g. Oswald - blank for default" form="settingsForm">
+            {% if display_font_status == 'ok' %}
+            <div class="font-status ok">Using {{ display_font_family }}</div>
+            {% elif display_font_status == 'not_found' %}
+            <div class="font-status error">Couldn't find "{{ display_font_family }}" on Google Fonts - check the spelling</div>
+            {% elif display_font_status == 'rate_limited' %}
+            <div class="font-status error">Rate-limited fetching fonts - try again in about an hour</div>
+            {% elif display_font_status == 'error' %}
+            <div class="font-status error">Couldn't reach the font server - try again shortly</div>
+            {% endif %}
+          </div>
+        </section>
+      </div>
+
+      <!-- BOOT SCREEN -->
+      <div class="tab-panel" data-panel="boot">
+        <section class="panel">
+          <p class="panel-label">Boot logo</p>
+          {% if boot_image_exists %}
+          <div style="text-align:center;background:#000;border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;">
+            <img src="{{ url_for('static', filename='boot_image.png') }}?v={{ range(100000)|random }}" style="max-width:100%;max-height:120px;">
+          </div>
+          <form action="/delete-boot-image" method="post" style="margin-bottom:18px;">
+            <button type="submit" class="danger" style="margin-top:0;">Remove logo</button>
+          </form>
+          {% else %}
+          <div class="empty" style="margin-bottom:18px;">No logo set. Upload one to show it at boot.</div>
+          {% endif %}
+          <form action="/upload-boot-image" method="post" enctype="multipart/form-data">
+            <input type="file" name="boot_image" accept="image/png, image/jpeg" required>
+            <button type="submit" class="primary" style="margin-top:0;">Upload logo</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Boot appearance</p>
+
+          <div class="field-group">
+            <div class="field-label"><span>Logo size</span><span class="val" id="bootSizeVal">{{ boot_image_height_pct }}%</span></div>
+            <input type="range" name="boot_image_height_pct" min="5" max="90" step="1" value="{{ boot_image_height_pct }}" form="settingsForm"
+                   oninput="document.getElementById('bootSizeVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <label for="boot_image_rotation" class="field-label">Logo rotation</label>
+            <select id="boot_image_rotation" name="boot_image_rotation" form="settingsForm">
+              <option value="0" {{ 'selected' if boot_image_rotation == 0 else '' }}>0&deg;</option>
+              <option value="90" {{ 'selected' if boot_image_rotation == 90 else '' }}>90&deg;</option>
+              <option value="180" {{ 'selected' if boot_image_rotation == 180 else '' }}>180&deg;</option>
+              <option value="270" {{ 'selected' if boot_image_rotation == 270 else '' }}>270&deg;</option>
+            </select>
+          </div>
+
+          <div class="field-group">
+            <label for="boot_image_seconds" class="field-label">Logo duration (seconds)</label>
+            <input type="number" id="boot_image_seconds" name="boot_image_seconds" min="0" max="30" step="0.5" value="{{ boot_image_seconds }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Spinner size</span><span class="val" id="spinSizeVal">{{ spinner_height_pct }}%</span></div>
+            <input type="range" name="spinner_height_pct" min="5" max="60" step="1" value="{{ spinner_height_pct }}" form="settingsForm"
+                   oninput="document.getElementById('spinSizeVal').textContent=this.value+'%'">
+          </div>
+
+          <div class="field-group">
+            <div class="field-label"><span>Spinner speed</span><span class="val" id="spinFpsVal">{{ spinner_fps }} fps</span></div>
+            <input type="range" name="spinner_fps" min="1" max="30" step="1" value="{{ spinner_fps }}" form="settingsForm"
+                   oninput="document.getElementById('spinFpsVal').textContent=this.value+' fps'">
+          </div>
+        </section>
+      </div>
+
+      <!-- SCHEDULE -->
+      <div class="tab-panel" data-panel="schedule">
+        <section class="panel">
+          <p class="panel-label">Schedule</p>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="schedule_enabled" {{ 'checked' if schedule_enabled else '' }} form="settingsForm">
+              <span>Turn the display off overnight</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label for="display_off_time" class="field-label">Display off at</label>
+            <input type="time" id="display_off_time" name="display_off_time" value="{{ display_off_time }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <label for="display_on_time" class="field-label">Display on at</label>
+            <input type="time" id="display_on_time" name="display_on_time" value="{{ display_on_time }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="reboot_enabled" {{ 'checked' if reboot_enabled else '' }} form="settingsForm">
+              <span>Reboot daily (housekeeping, not screen saving)</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label for="reboot_time" class="field-label">Reboot at</label>
+            <input type="time" id="reboot_time" name="reboot_time" value="{{ reboot_time }}" form="settingsForm">
+          </div>
+        </section>
+      </div>
+
+      <!-- TMDB -->
+      <div class="tab-panel" data-panel="tmdb">
+        <section class="panel">
+          <p class="panel-label">Add by link</p>
+          <p class="note">
+            Paste a TMDb URL to pin a specific title. Pinned posters stay put &mdash;
+            the automatic sync never removes them.
+          </p>
+          <form action="/tmdb-add-link" method="post">
+            <input type="text" name="tmdb_url" placeholder="https://www.themoviedb.org/movie/550-fight-club" required>
+            <button type="submit" class="primary">Add title</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">TMDb automation</p>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="tmdb_enabled" {{ 'checked' if tmdb_enabled else '' }} form="settingsForm">
+              <span>Pull posters from TMDb</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="tmdb_schedule_enabled" {{ 'checked' if tmdb_schedule_enabled else '' }} form="settingsForm">
+              <span>Run automatically on a daily schedule</span>
+            </label>
+          </div>
+
+          <div class="field-group" style="margin-top:24px;">
+            <label class="field-label">Source</label>
+            <div style="display:flex;gap:8px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="radio" name="tmdb_media_mode" value="movie" form="settingsForm"
+                       {{ 'checked' if tmdb_media_mode != 'tv' else '' }} onchange="syncMediaMode()">
+                <span>Movies</span>
+              </label>
+              <label class="checkbox-row" style="flex:1;">
+                <input type="radio" name="tmdb_media_mode" value="tv" form="settingsForm"
+                       {{ 'checked' if tmdb_media_mode == 'tv' else '' }} onchange="syncMediaMode()">
+                <span>TV</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="movieSources">
+            <p class="panel-label" style="margin-top:24px;">Movie categories</p>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_movie_trending" {{ 'checked' if tmdb_sources.get('movie_trending') else '' }} form="settingsForm">
+                <span>Trending this week</span>
+              </label>
+              <input type="number" name="limit_movie_trending" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('movie_trending', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_movie_popular" {{ 'checked' if tmdb_sources.get('movie_popular') else '' }} form="settingsForm">
+                <span>Popular now</span>
+              </label>
+              <input type="number" name="limit_movie_popular" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('movie_popular', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_movie_now_playing" {{ 'checked' if tmdb_sources.get('movie_now_playing') else '' }} form="settingsForm">
+                <span>In cinemas now</span>
+              </label>
+              <input type="number" name="limit_movie_now_playing" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('movie_now_playing', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_movie_upcoming" {{ 'checked' if tmdb_sources.get('movie_upcoming') else '' }} form="settingsForm">
+                <span>Coming soon</span>
+              </label>
+              <input type="number" name="limit_movie_upcoming" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('movie_upcoming', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+          </div>
+
+          <div id="tvSources">
+            <p class="panel-label" style="margin-top:24px;">TV categories</p>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_tv_trending" {{ 'checked' if tmdb_sources.get('tv_trending') else '' }} form="settingsForm">
+                <span>Trending this week</span>
+              </label>
+              <input type="number" name="limit_tv_trending" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('tv_trending', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_tv_popular" {{ 'checked' if tmdb_sources.get('tv_popular') else '' }} form="settingsForm">
+                <span>Popular now</span>
+              </label>
+              <input type="number" name="limit_tv_popular" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('tv_popular', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
+              <label class="checkbox-row" style="flex:1;">
+                <input type="checkbox" name="source_tv_on_the_air" {{ 'checked' if tmdb_sources.get('tv_on_the_air') else '' }} form="settingsForm">
+                <span>Currently airing</span>
+              </label>
+              <input type="number" name="limit_tv_on_the_air" min="1" max="20" step="1"
+                     value="{{ tmdb_source_limits.get('tv_on_the_air', tmdb_max_per_source) }}"
+                     title="How many posters from this category"
+                     style="width:76px;flex-shrink:0;" form="settingsForm">
+            </div>
+          </div>
+
+          <p class="note" style="margin:18px 0 0;">
+            The number beside each category is how many posters to take from it.
+            A title appearing in two categories is only added once, so the rotation
+            can end up smaller than the totals suggest.
+          </p>
+
+          <div class="field-group" style="margin-top:24px;">
+            <label for="tmdb_min_popularity" class="field-label">Minimum popularity &mdash; released titles</label>
+            <input type="number" id="tmdb_min_popularity" name="tmdb_min_popularity" min="0" max="2000" step="5" value="{{ tmdb_min_popularity }}" form="settingsForm">
+            <p class="note" style="margin:8px 0 0;">
+              Applies to everything except Coming soon. Filters out limited and
+              arthouse cinema runs. Around 30&ndash;50 works well. Use 0 for no filter.
+            </p>
+          </div>
+
+          <div class="field-group">
+            <label for="tmdb_min_popularity_upcoming" class="field-label">Minimum popularity &mdash; coming soon</label>
+            <input type="number" id="tmdb_min_popularity_upcoming" name="tmdb_min_popularity_upcoming" min="0" max="2000" step="1" value="{{ tmdb_min_popularity_upcoming }}" form="settingsForm">
+            <p class="note" style="margin:8px 0 0;">
+              Kept separate because unreleased films score far lower &mdash; popularity
+              tracks current attention, and a film nobody can watch yet has little
+              of it however big it will be. Even the year's biggest titles sit in
+              the low tens, so keep this around 8&ndash;15.
+            </p>
+          </div>
+
+          <div class="field-group">
+            <label for="tmdb_upcoming_months" class="field-label">Coming soon window (months)</label>
+            <input type="number" id="tmdb_upcoming_months" name="tmdb_upcoming_months" min="1" max="36" step="1" value="{{ tmdb_upcoming_months }}" form="settingsForm">
+            <p class="note" style="margin:8px 0 0;">
+              How far ahead "Coming soon" looks. TMDb's own upcoming list only spans
+              a few weeks, which is why major releases months away never showed up.
+            </p>
+          </div>
+
+          <p class="note" style="margin:12px 0 0;">
+            Titles in more than one category are only added once. Region filtering
+            applies to movies only &mdash; TMDb has no regional popularity for TV.
+          </p>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Automatic cleanup</p>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="poster_expiry_enabled" {{ 'checked' if poster_expiry_enabled else '' }} form="settingsForm">
+              <span>Remove titles once they age out</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label for="poster_expiry_days" class="field-label">Days after release</label>
+            <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="poster_expiry_include_pinned" {{ 'checked' if poster_expiry_include_pinned else '' }} form="settingsForm">
+              <span>Apply to pinned titles too</span>
+            </label>
+          </div>
+
+          <p class="note" style="margin:12px 0 0;">
+            TMDb has no "still in cinemas" flag, so its own <em>now playing</em> list is
+            used as the next best thing: a film past the age limit but still showing
+            in cinemas is kept anyway. Your own uploads are never removed by this.
+          </p>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Actions</p>
+          <form action="/tmdb-sync-now" method="post">
+            <button type="submit" class="primary" style="margin-top:0;">Sync now</button>
+          </form>
+          <form action="/purge-tmdb" method="post"
+                onsubmit="return confirm('Remove every TMDb poster, including pinned ones? Your own uploads are kept.')">
+            <button type="submit" class="danger">Purge all TMDb posters</button>
+          </form>
+        </section>
+      </div>
+
+      <!-- SYSTEM -->
+      <div class="tab-panel" data-panel="system">
+        <section class="panel">
+          <p class="panel-label">Interface appearance</p>
+          <div class="field-group">
+            <label for="accent_color" class="field-label">Accent colour</label>
+            <div class="color-row">
+              <input type="color" id="accent_color" name="accent_color" value="{{ accent_color }}" form="settingsForm"
+                     oninput="document.getElementById('accent_hex').value=this.value">
+              <input type="text" id="accent_hex" class="hex-input" value="{{ accent_color }}" maxlength="7"
+                     oninput="document.getElementById('accent_color').value=this.value">
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Power</p>
+          <p class="note">
+            Pulling the plug while the Pi is running risks corrupting the SD card.
+            Shut down here first, wait for the green activity LED to stop flickering,
+            then it's safe to cut power.
+          </p>
+
+          <form action="/power/restart-display" method="post">
+            <button type="submit" class="primary" style="margin-top:0;">Restart display service</button>
+          </form>
+          <form action="/power/reboot" method="post"
+                onsubmit="return confirm('Reboot the poster frame now?')">
+            <button type="submit" class="primary">Reboot Pi</button>
+          </form>
+          <form action="/power/poweroff" method="post"
+                onsubmit="return confirm('Shut down the poster frame? You will need to cut and restore power to start it again.')">
+            <button type="submit" class="danger">Shut down Pi</button>
+          </form>
+        </section>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="savebar" id="saveBar">
+  <span class="status" id="saveStatus">No changes</span>
+  <button type="submit" form="settingsForm" id="saveBtn" disabled>Save</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script>
+  // --- Tabs -------------------------------------------------------------
+  const tabNav = document.getElementById('tabNav');
+  const panels = document.querySelectorAll('.tab-panel');
+
+  function activateTab(name){
+    let matched = false;
+    tabNav.querySelectorAll('button').forEach(b=>{
+      const on = b.dataset.tab === name;
+      b.classList.toggle('active', on);
+      if(on) matched = true;
+    });
+    panels.forEach(p=>p.classList.toggle('active', p.dataset.panel === name));
+    if(matched){ try{ sessionStorage.setItem('posterframe_tab', name); }catch(e){} }
+    return matched;
+  }
+
+  tabNav.addEventListener('click', e=>{
+    const b = e.target.closest('button[data-tab]');
+    if(b) activateTab(b.dataset.tab);
+  });
+
+  try{
+    const saved = sessionStorage.getItem('posterframe_tab');
+    if(saved) activateTab(saved);
+  }catch(e){}
+
+  // --- TMDb media mode --------------------------------------------------
+  // The hidden set is NOT disabled, so its checkbox states still submit
+  // and stay saved - switching back preserves each side's settings.
+  function syncMediaMode(){
+    const chosen = document.querySelector('input[name="tmdb_media_mode"]:checked');
+    if(!chosen) return;
+    const m = document.getElementById('movieSources');
+    const t = document.getElementById('tvSources');
+    if(m) m.style.display = chosen.value === 'movie' ? 'block' : 'none';
+    if(t) t.style.display = chosen.value === 'tv' ? 'block' : 'none';
+  }
+  syncMediaMode();
+
+  // --- Unified save -----------------------------------------------------
+  const settingsForm = document.getElementById('settingsForm');
+  const saveBar = document.getElementById('saveBar');
+  const saveBtn = document.getElementById('saveBtn');
+  const saveStatus = document.getElementById('saveStatus');
+  let dirty = false;
+
+  function markDirty(){
+    if(dirty) return;
+    dirty = true;
+    saveBar.classList.add('dirty');
+    saveBtn.disabled = false;
+    saveStatus.textContent = 'Unsaved changes';
+  }
+
+  // Inputs are linked by the form attribute rather than nesting, so
+  // collect them by that association instead of by DOM position.
+  document.querySelectorAll('[form="settingsForm"]').forEach(el=>{
+    el.addEventListener('input', markDirty);
+    el.addEventListener('change', markDirty);
+  });
+
+  settingsForm.addEventListener('submit', ()=>{
+    dirty = false;
+    saveStatus.textContent = 'Saving...';
+    saveBtn.disabled = true;
+  });
+
+  window.addEventListener('beforeunload', e=>{
+    if(dirty){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  // --- Poster list ------------------------------------------------------
+  const posterList = document.getElementById('posterList');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let activeFilter = 'all';
+  let sortable = null;
+
+  const filterBar = document.getElementById('posterFilters');
+  const filterHint = document.getElementById('filterHint');
+
+  function applyFilter(name){
+    activeFilter = name;
+    filterBar.querySelectorAll('button').forEach(b=>
+      b.classList.toggle('active', b.dataset.filter === name));
+
+    document.querySelectorAll('.poster-row').forEach(row=>{
+      const show = name === 'all'
+        || row.dataset.status === name
+        || row.dataset.kind === name;
+      row.style.display = show ? 'flex' : 'none';
+    });
+
+    // Reordering while filtered would submit only the visible rows and
+    // silently drop the hidden ones from the rotation, so it's disabled.
+    const filtered = name !== 'all';
+    if(filterHint) filterHint.style.display = filtered ? 'block' : 'none';
+    if(sortable) sortable.option('disabled', filtered);
+  }
+
+  if(filterBar){
+    filterBar.addEventListener('click', e=>{
+      const b = e.target.closest('button[data-filter]');
+      if(b) applyFilter(b.dataset.filter);
+    });
+  }
+
+  if(posterList && posterList.children.length && !posterList.querySelector('.empty')){
+    sortable = Sortable.create(posterList, {
+      handle:'.drag-handle',
+      animation: reduceMotion ? 0 : 150,
+      ghostClass:'sortable-ghost',
+      onEnd:function(){
+        const order = Array.from(posterList.querySelectorAll('.poster-row')).map(el=>el.dataset.filename);
+        fetch('/reorder',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({order})}).then(()=>{
+            posterList.querySelectorAll('.position').forEach((el,i)=>{ el.textContent = i+1; });
+        });
+      }
+    });
+  }
+
+  document.querySelectorAll('.delete-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const filename = btn.dataset.filename;
+      if(!confirm('Remove "'+filename+'" from the rotation?')) return;
+      fetch('/delete/'+encodeURIComponent(filename),{method:'POST'})
+        .then(()=>window.location.reload());
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+# Secrets - never commit
+.env
+
+# Per-install state and user content
+config.json
+tmdb_tracked.json
+.last_reboot
+
+# Generated / downloaded content
+static/posters/
+static/boot_image.png
+originals/
+prepared/
+fonts_cache/
+splash_frames/
+
+# Logs
+*.log
+
+# Python
+venv/
+__pycache__/
+*.pyc
