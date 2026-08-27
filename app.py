@@ -2,6 +2,7 @@ import os
 import re
 import json
 import colorsys
+import glob
 import subprocess
 import uuid
 from datetime import date, datetime
@@ -1339,6 +1340,93 @@ def reorder():
     save_config(config)
 
     return jsonify({"status": "ok"})
+
+
+def find_connected_hdmi_edid():
+    """The DRM driver keeps reading a connected display's real EDID for
+    capability purposes independently of whatever mode install.sh's video=
+    kernel parameter is currently forcing the output to - so this reflects
+    the display's actual native resolution, not just an echo of what we
+    told it to output. Connector naming varies by board (a Pi 4's two
+    micro-HDMI ports show up as separate HDMI-A-1/HDMI-A-2, for instance),
+    so this looks for whichever one currently reports itself connected
+    rather than assuming a fixed path."""
+    for status_path in sorted(glob.glob("/sys/class/drm/card*-HDMI-*/status")):
+        try:
+            with open(status_path) as f:
+                if f.read().strip() == "connected":
+                    return status_path.replace("/status", "/edid")
+        except OSError:
+            continue
+    return None
+
+
+def parse_edid_preferred_resolution(edid_bytes):
+    """The first Detailed Timing Descriptor (bytes 54-71 of the base EDID
+    block) encodes the display's preferred/native timing - stable across
+    EDID 1.3/1.4, true for virtually every real display. A zero pixel clock
+    there means those bytes hold a monitor descriptor instead (rare, but
+    possible on some odd panels), not a timing - nothing usable to return."""
+    if len(edid_bytes) < 72:
+        return None
+    dtd = edid_bytes[54:72]
+    pixel_clock = dtd[0] | (dtd[1] << 8)
+    if pixel_clock == 0:
+        return None
+    h_active = dtd[2] | ((dtd[4] >> 4) << 8)
+    v_active = dtd[5] | ((dtd[7] >> 4) << 8)
+    if h_active <= 0 or v_active <= 0:
+        return None
+    return h_active, v_active
+
+
+@app.route("/detect-display")
+def detect_display():
+    """On-demand only - never called automatically at boot. This project
+    forces its HDMI mode from config.json specifically because this class
+    of EDID read can fail on a slow-to-wake TV at boot time (see install.sh);
+    running this same read unattended on every boot would silently reproduce
+    that exact bug. Safe here because a user triggers it long after boot,
+    once the display is definitely awake, and only ever pre-fills the
+    Display resolution fields for review - saving is still a separate,
+    explicit step.
+
+    Known limitation, confirmed on a Pi Zero W running vc4-fkms-v3d with
+    disable_fw_kms_setup=1 (this project's actual target hardware): once
+    install.sh has forced a video= mode, this always returns no EDID data,
+    not just early after boot - tested writing "detect" to the connector's
+    status file (the standard DRM reprobe trick) and vcgencmd's HDMI
+    commands, neither revives it. Not a bug to chase further here; the
+    error message below tells the user what to do instead."""
+    edid_path = find_connected_hdmi_edid()
+    if not edid_path:
+        return jsonify({"ok": False, "error": "No connected HDMI display detected."}), 404
+
+    try:
+        with open(edid_path, "rb") as f:
+            edid_bytes = f.read()
+    except OSError as e:
+        return jsonify({"ok": False, "error": f"Couldn't read EDID: {e}"}), 500
+
+    if not edid_bytes:
+        return jsonify({
+            "ok": False,
+            "error": (
+                "The display returned no EDID data. If a Display resolution is already forced "
+                "(install.sh has run and written a video= line to cmdline.txt), this is expected - "
+                "on this Pi's driver, forcing a mode stops it from reading EDID at all, live "
+                "retries included. Read the resolution off the TV's own input-signal display and "
+                "enter it by hand, or temporarily remove the video= line from cmdline.txt, reboot, "
+                "and try again while watching for it to come up."
+            ),
+        }), 502
+
+    result = parse_edid_preferred_resolution(edid_bytes)
+    if not result:
+        return jsonify({"ok": False, "error": "Couldn't find a usable preferred resolution in the display's EDID."}), 502
+
+    width, height = result
+    return jsonify({"ok": True, "width": width, "height": height})
 
 
 @app.route("/settings", methods=["POST"])

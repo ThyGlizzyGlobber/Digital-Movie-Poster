@@ -295,9 +295,14 @@
           <div class="field-group">
             <label class="field-label">Display resolution (px)</label>
             <div class="color-row">
-              <input type="number" name="display_width" min="100" max="8000" value="{{ display_width }}" placeholder="Width" form="settingsForm">
-              <input type="number" name="display_height" min="100" max="8000" value="{{ display_height }}" placeholder="Height" form="settingsForm">
+              <input type="number" id="display_width" name="display_width" min="100" max="8000" value="{{ display_width }}" placeholder="Width" form="settingsForm">
+              <input type="number" id="display_height" name="display_height" min="100" max="8000" value="{{ display_height }}" placeholder="Height" form="settingsForm">
             </div>
+            <button type="button" class="primary" id="detectDisplayBtn" style="margin-top:10px;">Detect display</button>
+            <div id="detectDisplayResult"></div>
+            <p class="note" style="margin:6px 0 0;">Reads the connected display's own reported resolution and
+              fills in the fields above - still needs Save below to apply, and forcing the new HDMI mode
+              needs <code>sudo install.sh -y</code> run once after that (see CLAUDE.md).</p>
           </div>
 
           <div class="field-group">
@@ -1114,6 +1119,40 @@
         checkUpdateBtn.disabled = false;
         checkUpdateBtn.textContent = 'Check for updates';
         updateResult.innerHTML = '<p class="flash err">Couldn’t reach the update check - is the network up?</p>';
+      });
+    });
+  }
+
+  // --- Detect display -------------------------------------------------
+  const detectDisplayBtn = document.getElementById('detectDisplayBtn');
+  const detectDisplayResult = document.getElementById('detectDisplayResult');
+  const displayWidthInput = document.getElementById('display_width');
+  const displayHeightInput = document.getElementById('display_height');
+
+  if(detectDisplayBtn){
+    detectDisplayBtn.addEventListener('click', ()=>{
+      detectDisplayBtn.disabled = true;
+      detectDisplayBtn.textContent = 'Detecting…';
+      detectDisplayResult.innerHTML = '';
+
+      fetch('/detect-display').then(r=>r.json()).then(data=>{
+        detectDisplayBtn.disabled = false;
+        detectDisplayBtn.textContent = 'Detect display';
+
+        if(!data.ok){
+          detectDisplayResult.innerHTML = '<p class="flash err">'+escapeHtml(data.error)+'</p>';
+          return;
+        }
+
+        displayWidthInput.value = data.width;
+        displayHeightInput.value = data.height;
+        markDirty();
+        detectDisplayResult.innerHTML = '<p class="flash ok">Detected '+data.width+'&times;'+data.height
+          +' - fields updated below, Save to apply.</p>';
+      }).catch(()=>{
+        detectDisplayBtn.disabled = false;
+        detectDisplayBtn.textContent = 'Detect display';
+        detectDisplayResult.innerHTML = '<p class="flash err">Couldn’t reach the detection endpoint.</p>';
       });
     });
   }
