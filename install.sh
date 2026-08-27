@@ -242,8 +242,30 @@ fi
 # downstream (fbi autoscaling composited images into that tiny framebuffer)
 # then looks cropped/skewed, which looks exactly like a TV overscan problem
 # but isn't - the real fix is to never depend on EDID succeeding at all.
-# 1920x1080@60 (CEA mode 16) matches what rotation_degrees pre-rotates the
-# composited canvas to before handing it to fbi - see slideshow.py.
+#
+# This image already ships disable_fw_kms_setup=1 (see config.txt), which
+# tells the VideoCore firmware to hand mode-setting entirely to the kernel's
+# KMS driver instead of doing it itself - confirmed live on this exact Pi:
+# adding hdmi_group/hdmi_mode to config.txt landed a *different* wrong
+# fallback (1024x768) instead of the intended 1920x1080, because the
+# firmware never even looks at those keys once disable_fw_kms_setup is set.
+# With fw-kms-setup disabled, the only thing that actually reaches the
+# kernel is the "video=" kernel command line parameter (cmdline.txt), so
+# that's what forces the mode here instead. hdmi_force_hotplug=1 stays in
+# config.txt since it's a separate, still-firmware-level concern (treat the
+# port as connected even with no/slow EDID response) - it doesn't select a
+# mode, so disable_fw_kms_setup doesn't affect it.
+# The forced resolution itself comes from config.json's display_width/
+# display_height (already the user-facing "Display resolution" setting in
+# the web UI's Display tab) rather than being hardcoded - swapped when
+# rotation_degrees is 90/270, matching how slideshow.py's canvas ends up
+# physically oriented after the same rotation gets applied before handing
+# frames to fbi. Falls back to 1920x1080 when config.json doesn't exist yet
+# (a fresh install, before the web app has ever run to create it). Changing
+# Display resolution in the web UI does NOT re-run this by itself - install.sh
+# only runs automatically when an update touches systemd/install.sh - so a
+# resolution change made purely in the UI needs `sudo install.sh -y` run by
+# hand afterward to actually re-force the new mode.
 # ---------------------------------------------------------------------------
 CONFIG_TXT=""
 for candidate in /boot/firmware/config.txt /boot/config.txt; do
@@ -255,19 +277,47 @@ done
 
 if [[ -z "$CONFIG_TXT" ]]; then
     warn "Couldn't find config.txt (checked /boot/firmware and /boot) - skipping"
-    warn "forced HDMI mode. A slow-to-wake TV may still fall back to 720x480."
-elif grep -q '^hdmi_mode=' "$CONFIG_TXT"; then
-    log "HDMI mode already forced ($CONFIG_TXT)"
+    warn "hdmi_force_hotplug. A slow-to-wake TV may still fall back to a safe mode."
+elif grep -q '^hdmi_force_hotplug=' "$CONFIG_TXT"; then
+    log "hdmi_force_hotplug already set ($CONFIG_TXT)"
 else
-    log "Forcing HDMI output to 1920x1080@60 ($CONFIG_TXT)"
+    log "Forcing HDMI hotplug detection ($CONFIG_TXT)"
     [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
     {
         echo ""
-        echo "# Force 1920x1080@60 instead of trusting EDID at boot - see install.sh"
+        echo "# Treat HDMI as connected even if EDID is slow/absent - see install.sh"
         echo "hdmi_force_hotplug=1"
-        echo "hdmi_group=1"
-        echo "hdmi_mode=16"
     } | priv tee -a "$CONFIG_TXT" > /dev/null
+fi
+
+HDMI_RES="$(python3 -c "
+import json
+try:
+    c = json.load(open('$BASE_DIR/config.json'))
+except Exception:
+    c = {}
+w = int(c.get('display_width') or 1920)
+h = int(c.get('display_height') or 1080)
+if c.get('rotation_degrees') in (90, 270):
+    w, h = h, w
+print(f'{w}x{h}')
+")"
+VIDEO_PARAM="video=HDMI-A-1:${HDMI_RES}@60"
+
+if [[ -z "$CMDLINE" ]]; then
+    : # Already warned above when locating $CMDLINE for console silencing.
+elif grep -qF "$VIDEO_PARAM" "$CMDLINE"; then
+    log "HDMI mode already forced to $HDMI_RES ($CMDLINE)"
+else
+    log "Forcing HDMI output to ${HDMI_RES}@60 via the kernel command line ($CMDLINE)"
+    [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
+    line="$(cat "$CMDLINE")"
+    # Drop any previous video=HDMI-A-1:... token first (e.g. Display
+    # resolution changed since install.sh last ran) so this never
+    # accumulates stale/conflicting tokens on repeat runs.
+    line="$(echo "$line" | sed -E 's/ ?video=HDMI-A-1:[^ ]*//g')"
+    line="$line $VIDEO_PARAM"
+    echo "$line" | priv tee "$CMDLINE" > /dev/null
 fi
 
 # ---------------------------------------------------------------------------
