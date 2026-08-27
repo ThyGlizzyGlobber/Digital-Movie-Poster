@@ -234,14 +234,51 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Force a fixed HDMI output mode instead of relying on EDID auto-detection
+# at boot. The Pi finishes booting well before some smart TVs' HDMI ports
+# are ready to answer an EDID query - when that race is lost, the VideoCore
+# firmware silently falls back to its hardcoded 720x480 NTSC safe mode and
+# stays there for the rest of the boot, with no error anywhere. Everything
+# downstream (fbi autoscaling composited images into that tiny framebuffer)
+# then looks cropped/skewed, which looks exactly like a TV overscan problem
+# but isn't - the real fix is to never depend on EDID succeeding at all.
+# 1920x1080@60 (CEA mode 16) matches what rotation_degrees pre-rotates the
+# composited canvas to before handing it to fbi - see slideshow.py.
+# ---------------------------------------------------------------------------
+CONFIG_TXT=""
+for candidate in /boot/firmware/config.txt /boot/config.txt; do
+    if [[ -f "$candidate" ]]; then
+        CONFIG_TXT="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$CONFIG_TXT" ]]; then
+    warn "Couldn't find config.txt (checked /boot/firmware and /boot) - skipping"
+    warn "forced HDMI mode. A slow-to-wake TV may still fall back to 720x480."
+elif grep -q '^hdmi_mode=' "$CONFIG_TXT"; then
+    log "HDMI mode already forced ($CONFIG_TXT)"
+else
+    log "Forcing HDMI output to 1920x1080@60 ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    {
+        echo ""
+        echo "# Force 1920x1080@60 instead of trusting EDID at boot - see install.sh"
+        echo "hdmi_force_hotplug=1"
+        echo "hdmi_group=1"
+        echo "hdmi_mode=16"
+    } | priv tee -a "$CONFIG_TXT" > /dev/null
+fi
+
+# ---------------------------------------------------------------------------
 log "Done."
 echo
 echo "  Web UI:    http://$(hostname -I 2>/dev/null | awk '{print $1}'):5000"
 echo "  Config:    $BASE_DIR/config.json (created on first run)"
 echo "  TMDb key:  $BASE_DIR/.env"
 echo
-echo "A reboot is needed to pick up the console changes and start the"
-echo "slideshow/spinner against a clean tty1."
+echo "A reboot is needed to pick up the console changes, any forced HDMI"
+echo "mode, and start the slideshow/spinner against a clean tty1."
 
 if [[ "$AUTO_REBOOT" == "1" ]]; then
     log "Rebooting now (--auto-reboot)"
