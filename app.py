@@ -389,16 +389,24 @@ def load_config():
             changed = True
 
     # hdmi_width/height (the resolution install.sh forces the physical HDMI
-    # signal to) used to just be display_width/height - splitting them apart
-    # is what lets a render canvas stay modest on weak hardware while the
-    # actual signal still matches a display's true native resolution. Default
-    # to whatever display_width/height already are so existing single-display
-    # setups see no behavior change until Detect Display is run again.
-    if "hdmi_width" not in config:
-        config["hdmi_width"] = config.get("display_width", 1080)
-        changed = True
-    if "hdmi_height" not in config:
-        config["hdmi_height"] = config.get("display_height", 1920)
+    # signal to - always the panel's own native/unrotated orientation, since
+    # that's what the receiver actually expects regardless of how it's
+    # mounted) used to just be display_width/height, which instead follows
+    # the opposite convention (pre-rotation render canvas, swapped relative
+    # to the panel's native orientation when rotation_degrees is 90/270 -
+    # confirmed against the original working setup: display_width/height
+    # 1080x1920 with rotation 270 forced a working 1920x1080 signal, i.e.
+    # the SWAPPED value was what the panel actually needed). Migrating the
+    # old value straight across without swapping it back would silently
+    # force the wrong (often unsupported) orientation for any existing
+    # install with rotation_degrees set to 90/270.
+    if "hdmi_width" not in config or "hdmi_height" not in config:
+        display_width = config.get("display_width", 1080)
+        display_height = config.get("display_height", 1920)
+        if config.get("rotation_degrees") in (90, 270):
+            display_width, display_height = display_height, display_width
+        config.setdefault("hdmi_width", display_width)
+        config.setdefault("hdmi_height", display_height)
         changed = True
 
     if "appearances" not in config:
@@ -1492,6 +1500,19 @@ def detect_display():
     if cap and max(width, height) > cap:
         scale = cap / max(width, height)
         render_width, render_height = round(width * scale), round(height * scale)
+    capped = (render_width, render_height) != (width, height)
+
+    # display_width/height (the render canvas) follows the OPPOSITE
+    # convention from hdmi_width/height: it's pre-rotation, swapped relative
+    # to the panel's native orientation when rotation_degrees is 90/270 -
+    # see the migration in load_config() for why (verified against the
+    # original working setup). width/height above are the panel's raw
+    # native EDID reading and go to hdmi_width/height unswapped; only this
+    # response's render_width/render_height (bound for display_width/height)
+    # need the swap applied here.
+    rotation_degrees = load_config().get("rotation_degrees")
+    if rotation_degrees in (90, 270):
+        render_width, render_height = render_height, render_width
 
     return jsonify({
         "ok": True,
@@ -1500,7 +1521,7 @@ def detect_display():
         "render_width": render_width,
         "render_height": render_height,
         "pi_model": pi_model,
-        "capped": (render_width, render_height) != (width, height),
+        "capped": capped,
     })
 
 

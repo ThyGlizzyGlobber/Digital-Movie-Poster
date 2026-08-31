@@ -301,10 +301,19 @@ try:
     c = json.load(open('$BASE_DIR/config.json'))
 except Exception:
     c = {}
+# Unswapped, deliberately: hdmi_width/height is the panel's own native EDID
+# resolution (whatever orientation the manufacturer calls 'native'), and the
+# receiver expects exactly that timing regardless of how the panel is
+# physically mounted - rotation is handled entirely by slideshow.py rotating
+# the composited image before handing it to fbi, not by forcing an unusual
+# swapped/portrait HDMI timing most TVs were never built to recognize.
+# Verified against the original working setup: display_width/height used to
+# do this same job pre-rotation-swapped (1080x1920 -> forced 1920x1080,
+# confirmed working) - i.e. the forced mode was ALREADY the unswapped native
+# value; only the render canvas needs the swap, which now happens in
+# app.py's load_config() migration and /detect-display instead.
 w = int(c.get('hdmi_width') or c.get('display_width') or 1920)
 h = int(c.get('hdmi_height') or c.get('display_height') or 1080)
-if c.get('rotation_degrees') in (90, 270):
-    w, h = h, w
 print(f'{w}x{h}')
 ")"
 VIDEO_PARAM="video=HDMI-A-1:${HDMI_RES}@60"
