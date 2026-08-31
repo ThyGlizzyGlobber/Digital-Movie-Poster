@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import threading
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import urlencode
 import numpy as np
 import requests
@@ -232,6 +232,19 @@ def contrasting_text_color(hex_color):
     r, g, b = hex_to_rgb(hex_color)
     luminance = 0.299 * r + 0.587 * g + 0.114 * b
     return "#14100e" if luminance > 140 else "#f5f3f0"
+
+
+def next_daily_sync(hour=4):
+    """The discovery fetch timer's own schedule (OnCalendar=*-*-* 04:00:00 in
+    systemd/posterframe-fetch.timer) - mirrored here in Python rather than
+    shelling out to systemctl, since it's a fixed, simple daily time. Used
+    only for display in the UI; the timer itself is the actual source of
+    truth for when the sync runs."""
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target
 
 
 # --- Google Font fetching, used for the physical display's custom fonts ---
@@ -669,6 +682,15 @@ def index():
     git_sha, git_message, git_version = get_git_info()
     log_sources = {key: label for key, (label, _) in LOG_SOURCES.items()}
 
+    # Same picked color throughout - just a lighter variant for use as the
+    # accent against a dark ground (control-room-style layout added a real
+    # light/dark mode; before this the app only ever rendered on dark, so
+    # the accent never needed a second, dark-tuned variant).
+    accent_dark = adjust_lightness(accent_color, 1.3)
+    next_sync = next_daily_sync() - datetime.now()
+    next_sync_hours, remainder = divmod(int(next_sync.total_seconds()), 3600)
+    next_sync_minutes = remainder // 60
+
     return render_template(
         "index.html",
         posters=posters,
@@ -679,6 +701,11 @@ def index():
         accent_dim=adjust_lightness(accent_color, 0.6),
         accent_hover=adjust_lightness(accent_color, 1.2),
         accent_text=contrasting_text_color(accent_color),
+        accent_dark=accent_dark,
+        accent_dark_hover=adjust_lightness(accent_color, 1.5),
+        accent_dark_text=contrasting_text_color(accent_dark),
+        next_sync_hours=next_sync_hours,
+        next_sync_minutes=next_sync_minutes,
         active_appearance=active_appearance,
         classic_text_color=classic_text_color,
         classic_band_bg_color=classic_band_bg_color,
