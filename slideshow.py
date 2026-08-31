@@ -272,8 +272,17 @@ def build_display_list(order, poster_meta, rotation_degrees, brightness, contras
         font_info.get("path"), font_info.get("is_variable"),
     )
 
-    wanted = set(order)
-    for stale_name in [n for n in _classic_composite_cache if n not in wanted]:
+    # Evict by whether the source file is actually gone, not by whether this
+    # call's `order` happens to include it - `order` shrinks to just the one
+    # override poster while Plex is active (see main()), and every removal
+    # path (delete, TMDb/JustWatch cleanup, Plex deactivate) already deletes
+    # the source file in POSTER_DIR at the same time it drops the name from
+    # config["order"]. Evicting on "not in order" instead used to wipe every
+    # other poster's cache - and its prepared/ file - for as long as Plex was
+    # playing, so the very next normal rebuild after Plex stopped had to
+    # recomposite the entire rotation from scratch again.
+    for stale_name in [n for n in _classic_composite_cache
+                        if not os.path.exists(os.path.join(POSTER_DIR, n))]:
         _classic_composite_cache.pop(stale_name, None)
         _prepared_owner.pop(stale_name, None)
         stale_path = os.path.join(PREPARED_DIR, stale_name)
@@ -460,8 +469,11 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
         top_font_info.get("path"), top_font_info.get("is_variable"), cast_count,
     )
 
-    wanted = set(order)
-    for stale_name in [n for n in _framed_composite_cache if n not in wanted]:
+    # See build_display_list's comment - evict by source file existence, not
+    # by membership in this call's `order` (which shrinks to one poster while
+    # Plex is active).
+    for stale_name in [n for n in _framed_composite_cache
+                        if not os.path.exists(os.path.join(POSTER_DIR, n))]:
         _framed_composite_cache.pop(stale_name, None)
         _prepared_owner.pop(stale_name, None)
         stale_path = os.path.join(PREPARED_DIR, stale_name)
