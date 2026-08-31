@@ -371,7 +371,7 @@
           <div class="stat">
             <div class="label">Next sync</div>
             <div class="value">{{ next_sync_hours }}h <span class="unit">{{ next_sync_minutes }}m</span></div>
-            <div class="foot">04:00 daily &middot; {{ 'JustWatch' if discovery_source == 'justwatch' else 'TMDb' }} active</div>
+            <div class="foot">{{ discovery_sync_time }} daily &middot; {{ 'JustWatch' if discovery_source == 'justwatch' else 'TMDb' }} active</div>
           </div>
           <div class="stat">
             <div class="label">Plex</div>
@@ -859,6 +859,11 @@
               <span>JustWatch</span>
             </label>
           </div>
+
+          <div class="field-group" style="margin-top:18px;">
+            <label for="discovery_sync_time" class="field-label">Daily sync time</label>
+            <input type="time" id="discovery_sync_time" name="discovery_sync_time" value="{{ discovery_sync_time }}" form="settingsForm">
+          </div>
         </section>
 
         <section class="panel">
@@ -1188,6 +1193,15 @@
               <label for="plex_poll_seconds" class="field-label">Check interval (seconds)</label>
               <input type="number" id="plex_poll_seconds" name="plex_poll_seconds" min="5" max="120" step="1"
                      value="{{ plex_poll_seconds }}" form="settingsForm">
+            </div>
+
+            <div class="field-group">
+              <label for="plex_stop_delay_seconds" class="field-label">Wait before reverting (seconds)</label>
+              <input type="number" id="plex_stop_delay_seconds" name="plex_stop_delay_seconds" min="0" max="600" step="5"
+                     value="{{ plex_stop_delay_seconds }}" form="settingsForm">
+              <p class="note" style="margin:6px 0 0;">How long playback has to genuinely stop before the frame
+                switches back to normal rotation &mdash; bridges brief pauses and gaps between episodes so
+                Now Playing doesn't flicker off and back on. 0 reverts immediately.</p>
             </div>
 
             <div class="field-group">

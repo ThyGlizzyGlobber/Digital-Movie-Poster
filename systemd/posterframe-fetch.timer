@@ -1,9 +1,15 @@
 [Unit]
-Description=Run the daily poster discovery sync (TMDb or JustWatch, whichever is active)
+Description=Check every 5 minutes whether it's time for the daily discovery sync
 
 [Timer]
-OnCalendar=*-*-* 04:00:00
-Persistent=true
+# The actual configured time (discovery_sync_time in config.json, settable
+# in the web UI) lives in fetch_discovery.py, not here - this just needs to
+# check often enough that the real trigger time feels reasonably precise.
+# No Persistent= - fetch_discovery.py's own ">= target time, not yet run
+# today" check already self-heals a missed tick (Pi off, timer jitter) on
+# the very next 5-minute check, so systemd's own catch-up isn't needed.
+OnCalendar=*:0/5
+AccuracySec=1min
 
 [Install]
 WantedBy=timers.target

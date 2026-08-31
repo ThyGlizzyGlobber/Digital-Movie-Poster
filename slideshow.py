@@ -122,13 +122,6 @@ def get_billing_font(size):
     return _billing_font_cache[size]
 
 
-def clear_prepared_dir():
-    for name in os.listdir(PREPARED_DIR):
-        path = os.path.join(PREPARED_DIR, name)
-        if os.path.isfile(path):
-            os.remove(path)
-
-
 def compute_status_text(meta):
     if not meta or not meta.get("release_date"):
         return None
@@ -246,11 +239,49 @@ def build_composited_poster(source_path, meta, canvas_w, canvas_h, text_rgb, ban
     return canvas
 
 
+_classic_composite_cache = {}  # filename -> cache key the current prepared/ file was built with
+_framed_composite_cache = {}  # separate from the classic cache - same filename can mean a
+                              # differently-built file depending on which appearance made it
+_prepared_owner = {}  # filename -> "classic"/"framed", whichever builder actually wrote the
+                      # file currently on disk. Both caches share one prepared/<filename> path,
+                      # so a classic cache entry alone can't prove the file on disk is still
+                      # classic output - it could have been overwritten by framed since, if the
+                      # appearance was switched and switched back with nothing else changing in
+                      # between. This is the one extra check that makes a cache hit trustworthy.
+
+
 def build_display_list(order, poster_meta, rotation_degrees, brightness, contrast,
                         saturation, display_w, display_h, text_rgb, band_bg_rgb, position,
                         top_content, bottom_content, top_custom_text, bottom_custom_text,
                         text_size_pct, font_info):
-    clear_prepared_dir()
+    # Every poster in `order` used to get fully recomposited here on *any*
+    # signature change - including just Plex activating/deactivating, which
+    # doesn't change 15 of the 16 posters at all. On a Zero W, recompositing
+    # a whole rotation from scratch is genuinely slow, and since the old fbi
+    # is deliberately kept alive throughout (composite first, swap after -
+    # see the gotcha below), that entire delay was invisible in the logs but
+    # very visible on screen: the old poster just sat there long after the
+    # log line said "rebuilding". Caching per-poster - skip recompositing
+    # anything whose source file, metadata, and the shared settings are all
+    # unchanged since it was last built - fixes both that and every
+    # discovery sync that only actually adds one or two titles.
+    settings_key = (
+        rotation_degrees, brightness, contrast, saturation, display_w, display_h,
+        text_rgb, band_bg_rgb, position, top_content, bottom_content,
+        top_custom_text, bottom_custom_text, text_size_pct,
+        font_info.get("path"), font_info.get("is_variable"),
+    )
+
+    wanted = set(order)
+    for stale_name in [n for n in _classic_composite_cache if n not in wanted]:
+        _classic_composite_cache.pop(stale_name, None)
+        _prepared_owner.pop(stale_name, None)
+        stale_path = os.path.join(PREPARED_DIR, stale_name)
+        try:
+            os.remove(stale_path)
+        except OSError:
+            pass
+
     paths = []
 
     for filename in order:
@@ -259,6 +290,16 @@ def build_display_list(order, poster_meta, rotation_degrees, brightness, contras
             continue
 
         meta = poster_meta.get(filename)
+        out_path = os.path.join(PREPARED_DIR, filename)
+        cache_key = (settings_key, os.path.getmtime(source_path),
+                     json.dumps(meta, sort_keys=True) if meta else None)
+
+        if (_classic_composite_cache.get(filename) == cache_key
+                and _prepared_owner.get(filename) == "classic"
+                and os.path.exists(out_path)):
+            paths.append(out_path)
+            continue
+
         canvas = build_composited_poster(
             source_path, meta, display_w, display_h, text_rgb, band_bg_rgb,
             position, top_content, bottom_content, top_custom_text,
@@ -276,8 +317,9 @@ def build_display_list(order, poster_meta, rotation_degrees, brightness, contras
         if saturation != 1.0:
             canvas = ImageEnhance.Color(canvas).enhance(saturation)
 
-        out_path = os.path.join(PREPARED_DIR, filename)
         canvas.save(out_path)
+        _classic_composite_cache[filename] = cache_key
+        _prepared_owner[filename] = "classic"
         paths.append(out_path)
 
     return paths
@@ -409,7 +451,25 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
                                saturation, display_w, display_h, text_rgb, bg_rgb, position,
                                poster_scale_pct, top_content, top_custom_text, top_font_info,
                                cast_count):
-    clear_prepared_dir()
+    # See build_display_list's comment - same per-poster caching, so
+    # switching Plex on/off (or a discovery sync adding one title) doesn't
+    # force every other poster in the Framed rotation to be recomposited too.
+    settings_key = (
+        rotation_degrees, brightness, contrast, saturation, display_w, display_h,
+        text_rgb, bg_rgb, position, poster_scale_pct, top_content, top_custom_text,
+        top_font_info.get("path"), top_font_info.get("is_variable"), cast_count,
+    )
+
+    wanted = set(order)
+    for stale_name in [n for n in _framed_composite_cache if n not in wanted]:
+        _framed_composite_cache.pop(stale_name, None)
+        _prepared_owner.pop(stale_name, None)
+        stale_path = os.path.join(PREPARED_DIR, stale_name)
+        try:
+            os.remove(stale_path)
+        except OSError:
+            pass
+
     paths = []
 
     for filename in order:
@@ -418,6 +478,16 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
             continue
 
         meta = poster_meta.get(filename)
+        out_path = os.path.join(PREPARED_DIR, filename)
+        cache_key = (settings_key, os.path.getmtime(source_path),
+                     json.dumps(meta, sort_keys=True) if meta else None)
+
+        if (_framed_composite_cache.get(filename) == cache_key
+                and _prepared_owner.get(filename) == "framed"
+                and os.path.exists(out_path)):
+            paths.append(out_path)
+            continue
+
         canvas = build_framed_poster(
             source_path, meta, display_w, display_h, text_rgb, bg_rgb, position,
             poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count,
@@ -434,8 +504,9 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
         if saturation != 1.0:
             canvas = ImageEnhance.Color(canvas).enhance(saturation)
 
-        out_path = os.path.join(PREPARED_DIR, filename)
         canvas.save(out_path)
+        _framed_composite_cache[filename] = cache_key
+        _prepared_owner[filename] = "framed"
         paths.append(out_path)
 
     return paths
@@ -594,6 +665,25 @@ def main():
     spinner_stopped = False
     display_on = True
     force_rebuild = False
+
+    # One-time reconciliation: the per-poster composite cache starts empty
+    # on every fresh process start, so a poster removed from rotation while
+    # this process wasn't running (e.g. across a restart) wouldn't otherwise
+    # get its leftover prepared/ file cleaned up by anything - harmless
+    # (never referenced, never shown) but no reason to let it sit there
+    # forever. Checked against the actual posters directory, not config's
+    # order list, so this is correct even if config.json itself is what's
+    # currently unreadable.
+    try:
+        known = set(os.listdir(POSTER_DIR))
+        for name in os.listdir(PREPARED_DIR):
+            if name not in known:
+                try:
+                    os.remove(os.path.join(PREPARED_DIR, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
 
     try:
         while True:

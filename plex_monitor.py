@@ -185,10 +185,19 @@ def deactivate():
 
 def main():
     current_session_key = None
+    # Set the moment a poll first finds no session while one was previously
+    # active - not acted on immediately. Plex can report a brief gap between
+    # episodes in a show, or a short pause, as "nothing playing" for one or
+    # two polls; reverting to normal rotation instantly made those look like
+    # someone stopped watching. Only once this has held for
+    # plex_stop_delay_seconds do we actually deactivate - if the same or a
+    # new session shows up before then, it's just cleared.
+    stopped_since = None
 
     while True:
         config = load_config()
         poll_seconds = max(POLL_FLOOR, config.get("plex_poll_seconds", 15.0))
+        stop_delay = max(0, config.get("plex_stop_delay_seconds", 30))
 
         server_url = config.get("plex_server_url")
         username = config.get("plex_username")
@@ -220,16 +229,29 @@ def main():
             try:
                 if activate(server_url, headers, session, cast_count):
                     current_session_key = session_key
+                    stopped_since = None
             except requests.RequestException as e:
                 log(f"Could not activate now-playing poster: {e}")
 
+        elif session_key and session_key == current_session_key:
+            # Still watching the same thing - cancel a pending revert if an
+            # earlier poll had briefly seen no session.
+            if stopped_since is not None:
+                log("Playback resumed before the revert delay elapsed")
+                stopped_since = None
+
         elif not session and current_session_key:
-            log("Playback stopped")
-            try:
-                deactivate()
-                current_session_key = None
-            except requests.RequestException as e:
-                log(f"Could not clear now-playing poster: {e}")
+            if stopped_since is None:
+                stopped_since = time.monotonic()
+                log(f"Playback appears stopped - reverting in {stop_delay:g}s if it doesn't resume")
+            elif time.monotonic() - stopped_since >= stop_delay:
+                log("Playback stopped")
+                try:
+                    deactivate()
+                    current_session_key = None
+                    stopped_since = None
+                except requests.RequestException as e:
+                    log(f"Could not clear now-playing poster: {e}")
 
         time.sleep(poll_seconds)
 

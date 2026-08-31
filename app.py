@@ -234,14 +234,18 @@ def contrasting_text_color(hex_color):
     return "#14100e" if luminance > 140 else "#f5f3f0"
 
 
-def next_daily_sync(hour=4):
-    """The discovery fetch timer's own schedule (OnCalendar=*-*-* 04:00:00 in
-    systemd/posterframe-fetch.timer) - mirrored here in Python rather than
-    shelling out to systemctl, since it's a fixed, simple daily time. Used
-    only for display in the UI; the timer itself is the actual source of
-    truth for when the sync runs."""
+def next_daily_sync(time_str):
+    """Next occurrence of the user-configured discovery_sync_time
+    (HH:MM). config.json is the actual source of truth for this now -
+    fetch_discovery.py reads the same field to decide when to actually
+    run - this just mirrors the same math for display in the UI."""
+    try:
+        hour, minute = (int(p) for p in time_str.split(":", 1))
+    except (ValueError, AttributeError):
+        hour, minute = 4, 0
+
     now = datetime.now()
-    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= now:
         target += timedelta(days=1)
     return target
@@ -405,12 +409,14 @@ def load_config():
         "tmdb_min_popularity_upcoming": 10,
         "tmdb_upcoming_months": 12,
         "discovery_source": "tmdb",
+        "discovery_sync_time": "04:00",
         "justwatch_enabled": False,
         "justwatch_schedule_enabled": True,
         "justwatch_max_titles": 10,
         "plex_client_id": "",
         "plex_enabled": False,
         "plex_poll_seconds": 15.0,
+        "plex_stop_delay_seconds": 30,
         "plex_username": "",
         "plex_server_name": "",
         "plex_server_url": "",
@@ -647,6 +653,7 @@ def index():
     tmdb_enabled = config.get("tmdb_enabled", True)
     tmdb_schedule_enabled = config.get("tmdb_schedule_enabled", True)
     discovery_source = config.get("discovery_source", "tmdb")
+    discovery_sync_time = config.get("discovery_sync_time", "04:00")
     justwatch_enabled = config.get("justwatch_enabled", False)
     justwatch_schedule_enabled = config.get("justwatch_schedule_enabled", True)
     justwatch_max_titles = config.get("justwatch_max_titles", 10)
@@ -674,6 +681,7 @@ def index():
     tmdb_upcoming_months = config.get("tmdb_upcoming_months", 12)
     plex_enabled = config.get("plex_enabled", False)
     plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
+    plex_stop_delay_seconds = config.get("plex_stop_delay_seconds", 30)
     plex_username = config.get("plex_username", "")
     plex_server_name = config.get("plex_server_name", "")
     plex_home_users = config.get("plex_home_users", [])
@@ -687,7 +695,7 @@ def index():
     # light/dark mode; before this the app only ever rendered on dark, so
     # the accent never needed a second, dark-tuned variant).
     accent_dark = adjust_lightness(accent_color, 1.3)
-    next_sync = next_daily_sync() - datetime.now()
+    next_sync = next_daily_sync(discovery_sync_time) - datetime.now()
     next_sync_hours, remainder = divmod(int(next_sync.total_seconds()), 3600)
     next_sync_minutes = remainder // 60
 
@@ -738,6 +746,7 @@ def index():
         tmdb_enabled=tmdb_enabled,
         tmdb_schedule_enabled=tmdb_schedule_enabled,
         discovery_source=discovery_source,
+        discovery_sync_time=discovery_sync_time,
         justwatch_enabled=justwatch_enabled,
         justwatch_schedule_enabled=justwatch_schedule_enabled,
         justwatch_max_titles=justwatch_max_titles,
@@ -768,6 +777,7 @@ def index():
         git_version=git_version,
         plex_enabled=plex_enabled,
         plex_poll_seconds=plex_poll_seconds,
+        plex_stop_delay_seconds=plex_stop_delay_seconds,
         plex_username=plex_username,
         plex_server_name=plex_server_name,
         plex_home_users=plex_home_users,
@@ -2021,6 +2031,10 @@ def settings():
         if source in ("tmdb", "justwatch"):
             config["discovery_source"] = source
 
+        sync_time = request.form.get("discovery_sync_time", "").strip()
+        if TIME_RE.match(sync_time):
+            config["discovery_sync_time"] = sync_time
+
         config["justwatch_enabled"] = "justwatch_enabled" in request.form
         config["justwatch_schedule_enabled"] = "justwatch_schedule_enabled" in request.form
 
@@ -2034,6 +2048,10 @@ def settings():
         poll_seconds = request.form.get("plex_poll_seconds", type=float)
         if poll_seconds is not None:
             config["plex_poll_seconds"] = max(5.0, min(120.0, poll_seconds))
+
+        stop_delay = request.form.get("plex_stop_delay_seconds", type=int)
+        if stop_delay is not None:
+            config["plex_stop_delay_seconds"] = max(0, min(600, stop_delay))
 
         band = request.form.get("plex_band")
         if band in ("top", "bottom", "none"):
