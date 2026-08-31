@@ -39,7 +39,9 @@ from datetime import date, datetime, timedelta
 
 import requests
 
-import fetch_posters  # reuse upload_poster / fetch_credits / update_poster_meta / remove_poster / fetch_now_playing_ids
+import fetch_posters  # reuse upload_poster / fetch_credits / update_poster_meta / remove_poster / fetch_now_playing_ids / log
+
+log = fetch_posters.log  # same timestamped format, no need for a second copy
 
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "")
 TMDB_BASE = "https://api.themoviedb.org/3"
@@ -203,14 +205,14 @@ def expire_old_posters(config):
 
         title = (info or {}).get("title", filename)
         if item_id in still_playing:
-            print(f"Keeping {title} - past the age limit but still in cinemas", flush=True)
+            log(f"Keeping {title} - past the age limit but still in cinemas")
             continue
 
         try:
             fetch_posters.remove_poster(filename, f"{title} (released {raw_date})")
             expired.add(str(item_id))
         except requests.RequestException as e:
-            print(f"Could not expire {title}: {e}", flush=True)
+            log(f"Could not expire {title}: {e}")
 
     return expired
 
@@ -219,22 +221,22 @@ def main():
     config = load_web_config()
 
     if not config.get("justwatch_enabled", False):
-        print("JustWatch integration is disabled in the web UI - skipping.", flush=True)
+        log("JustWatch integration is disabled in the web UI - skipping.")
         return
 
     if config.get("discovery_source", "tmdb") != "justwatch":
-        print("JustWatch is not the active discovery source - skipping.", flush=True)
+        log("JustWatch is not the active discovery source - skipping.")
         return
 
     if os.environ.get("POSTERFRAME_TRIGGER") == "schedule":
         if not config.get("justwatch_schedule_enabled", True):
-            print("Scheduled sync is disabled in the web UI - skipping.", flush=True)
+            log("Scheduled sync is disabled in the web UI - skipping.")
             return
 
     if not TMDB_API_KEY:
         # Discovery comes from JustWatch, but poster art and credits still
         # come from TMDb, so its key is required either way.
-        print("TMDB_API_KEY environment variable not set - aborting.", flush=True)
+        log("TMDB_API_KEY environment variable not set - aborting.")
         return
 
     expired = expire_old_posters(config)
@@ -245,12 +247,12 @@ def main():
     try:
         candidates = fetch_popular_titles()
     except (requests.RequestException, ValueError) as e:
-        print(f"Failed to fetch JustWatch's popular list: {e}", flush=True)
+        log(f"Failed to fetch JustWatch's popular list: {e}")
         return
 
     this_year_titles = [c for c in candidates if c.get("year") == this_year]
-    print(f"JustWatch: {len(candidates)} popular title(s) fetched, "
-          f"{len(this_year_titles)} released in {this_year}.", flush=True)
+    log(f"JustWatch: {len(candidates)} popular title(s) fetched, "
+          f"{len(this_year_titles)} released in {this_year}.")
 
     tracked = load_tracked()
     wanted = {}
@@ -261,7 +263,7 @@ def main():
 
         result = resolve_tmdb_id(entry["title"], entry["year"])
         if not result or not result.get("poster_path"):
-            print(f"Could not match on TMDb: {entry['title']} ({entry['year']})", flush=True)
+            log(f"Could not match on TMDb: {entry['title']} ({entry['year']})")
             continue
 
         key = str(result["id"])
@@ -277,7 +279,7 @@ def main():
         }
 
     if not wanted:
-        print("No results resolved - leaving the current rotation alone.", flush=True)
+        log("No results resolved - leaving the current rotation alone.")
         save_tracked(tracked)
         return
 
@@ -287,7 +289,7 @@ def main():
                 fetch_posters.upload_poster(item)
                 tracked[key] = item["title"]
             except requests.RequestException as e:
-                print(f"Failed to add {item['title']}: {e}", flush=True)
+                log(f"Failed to add {item['title']}: {e}")
                 continue
 
         try:
@@ -295,7 +297,7 @@ def main():
             credits = fetch_posters.fetch_credits("movie", key, cast_count)
             fetch_posters.update_poster_meta(item, credits)
         except requests.RequestException as e:
-            print(f"Failed to update metadata for {item['title']}: {e}", flush=True)
+            log(f"Failed to update metadata for {item['title']}: {e}")
 
     for key in list(tracked.keys()):
         if key in expired:
@@ -305,11 +307,11 @@ def main():
             try:
                 fetch_posters.remove_poster(f"justwatch_movie_{key}.jpg", tracked[key])
             except requests.RequestException as e:
-                print(f"Failed to remove {tracked[key]}: {e}", flush=True)
+                log(f"Failed to remove {tracked[key]}: {e}")
             del tracked[key]
 
     save_tracked(tracked)
-    print(f"Done. Tracking {len(tracked)} JustWatch-sourced poster(s).", flush=True)
+    log(f"Done. Tracking {len(tracked)} JustWatch-sourced poster(s).")
 
 
 if __name__ == "__main__":

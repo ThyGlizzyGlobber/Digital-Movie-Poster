@@ -11,6 +11,7 @@ movie ID and a TV ID can collide (movie 550 and TV 550 are different).
 import json
 import os
 import re
+import time
 from datetime import date, datetime, timedelta
 
 import requests
@@ -27,6 +28,15 @@ TRACKING_FILE = os.path.join(BASE_DIR, "tmdb_tracked.json")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 OLD_NAME_RE = re.compile(r"^\d+$")
+
+
+def log(message):
+    # Timestamped (matches the other log files' format) so a step's actual
+    # wall-clock duration is readable directly off tmdb_sync.log. app.py
+    # captures this process's stdout straight into that file, so this only
+    # needs to print - no file handling here.
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}", flush=True)
+
 
 # region only affects movie endpoints - TMDb has no concept of regional
 # popularity for TV, so passing it there is simply ignored.
@@ -115,14 +125,14 @@ def expire_old_posters(config, api_key):
         title = (info or {}).get("title", filename)
 
         if media == "movie" and item_id in still_playing:
-            print(f"Keeping {title} - past the age limit but still in cinemas", flush=True)
+            log(f"Keeping {title} - past the age limit but still in cinemas")
             continue
 
         try:
             remove_poster(filename, f"{title} (released {raw_date})")
             expired.add(f"{media}:{item_id}")
         except requests.RequestException as e:
-            print(f"Could not expire {title}: {e}", flush=True)
+            log(f"Could not expire {title}: {e}")
 
     return expired
 
@@ -227,7 +237,7 @@ def upload_poster(item):
     # over 30s, and timing out here is what strands half-added posters.
     resp = requests.post(f"{APP_BASE}/upload", files=files, timeout=180)
     resp.raise_for_status()
-    print(f"Added: {item['title']}", flush=True)
+    log(f"Added: {item['title']}")
 
 
 def dedupe(items):
@@ -319,7 +329,7 @@ def update_poster_meta(item, credits=None):
 def remove_poster(filename, title):
     resp = requests.post(f"{APP_BASE}/delete/{filename}", timeout=15)
     resp.raise_for_status()
-    print(f"Removed: {title}", flush=True)
+    log(f"Removed: {title}")
 
 
 def migrate_old_entries(tracked):
@@ -330,26 +340,26 @@ def migrate_old_entries(tracked):
         try:
             remove_poster(f"tmdb_{key}.jpg", f"{tracked[key]} (old format)")
         except requests.RequestException as e:
-            print(f"Could not remove old entry {key}: {e}", flush=True)
+            log(f"Could not remove old entry {key}: {e}")
         del tracked[key]
     if old_keys:
-        print(f"Migrated {len(old_keys)} poster(s) to the new naming scheme.", flush=True)
+        log(f"Migrated {len(old_keys)} poster(s) to the new naming scheme.")
 
 
 def main():
     config = load_web_config()
 
     if not config.get("tmdb_enabled", True):
-        print("TMDb integration is disabled in the web UI - skipping.", flush=True)
+        log("TMDb integration is disabled in the web UI - skipping.")
         return
 
     if os.environ.get("POSTERFRAME_TRIGGER") == "schedule":
         if not config.get("tmdb_schedule_enabled", True):
-            print("Scheduled sync is disabled in the web UI - skipping.", flush=True)
+            log("Scheduled sync is disabled in the web UI - skipping.")
             return
 
     if not TMDB_API_KEY:
-        print("TMDB_API_KEY environment variable not set - aborting.", flush=True)
+        log("TMDB_API_KEY environment variable not set - aborting.")
         return
 
     expired = expire_old_posters(config, TMDB_API_KEY)
@@ -370,13 +380,13 @@ def main():
     ]
     if not enabled:
         label = "movie" if mode == "movie" else "TV"
-        print(f"No {label} categories enabled - nothing to sync.", flush=True)
+        log(f"No {label} categories enabled - nothing to sync.")
         return
 
     limits_desc = ", ".join(
         f"{k} x{source_limits.get(k, default_limit)}" for k in enabled
     )
-    print(f"Syncing {mode} categories: {limits_desc}", flush=True)
+    log(f"Syncing {mode} categories: {limits_desc}")
 
     tracked = load_tracked()
     migrate_old_entries(tracked)
@@ -409,10 +419,10 @@ def main():
                     continue  # aged out this run - don't bring it straight back
                 wanted.setdefault(item["key"], item)
         except requests.RequestException as e:
-            print(f"Failed to fetch {source_key}: {e}", flush=True)
+            log(f"Failed to fetch {source_key}: {e}")
 
     if not wanted:
-        print("No results returned - leaving the current rotation alone.", flush=True)
+        log("No results returned - leaving the current rotation alone.")
         save_tracked(tracked)
         return
 
@@ -422,7 +432,7 @@ def main():
                 upload_poster(item)
                 tracked[key] = item["title"]
             except requests.RequestException as e:
-                print(f"Failed to add {item['title']}: {e}", flush=True)
+                log(f"Failed to add {item['title']}: {e}")
                 continue
 
         try:
@@ -431,7 +441,7 @@ def main():
             credits = fetch_credits(media, tmdb_id, cast_count)
             update_poster_meta(item, credits)
         except requests.RequestException as e:
-            print(f"Failed to update metadata for {item['title']}: {e}", flush=True)
+            log(f"Failed to update metadata for {item['title']}: {e}")
 
     for key in list(tracked.keys()):
         if key in expired:
@@ -442,12 +452,12 @@ def main():
             try:
                 remove_poster(f"tmdb_{media}_{item_id}.jpg", tracked[key])
             except requests.RequestException as e:
-                print(f"Failed to remove {tracked[key]}: {e}", flush=True)
+                log(f"Failed to remove {tracked[key]}: {e}")
             del tracked[key]
 
     save_tracked(tracked)
-    print(f"Done. Tracking {len(tracked)} auto-fetched poster(s) "
-          f"across {len(enabled)} categor{'y' if len(enabled) == 1 else 'ies'}.", flush=True)
+    log(f"Done. Tracking {len(tracked)} auto-fetched poster(s) "
+          f"across {len(enabled)} categor{'y' if len(enabled) == 1 else 'ies'}.")
 
 
 if __name__ == "__main__":

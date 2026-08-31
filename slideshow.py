@@ -36,8 +36,12 @@ os.makedirs(PREPARED_DIR, exist_ok=True)
 
 
 def log(message):
+    # Timestamped (matches plex_monitor.log's format) so a rebuild's actual
+    # wall-clock duration - e.g. how long the fbi swap around a Plex
+    # transition really takes - can be read directly off two log lines
+    # instead of guessed at.
     with open(LOG_PATH, "a") as f:
-        f.write(message + "\n")
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n")
 
 
 def load_config():
@@ -732,6 +736,7 @@ def main():
                     current_process.terminate()
                     current_process.wait()
                     current_process = None
+                    time.sleep(0.15)  # see the matching comment below - same async-restore race
                     blank_framebuffer()
                 applied_signature = None
                 log("No posters to show yet, waiting...")
@@ -768,6 +773,19 @@ def main():
                     # since that's the moment someone's actually watching the
                     # screen. A clean black frame here reads as a normal
                     # transition; console text reads as a glitch.
+                    #
+                    # wait() returning doesn't guarantee that restore has
+                    # actually finished landing on the framebuffer - it can
+                    # be a step in the kernel/DRM console's own asynchronous
+                    # VT-mode teardown, not something that completes exactly
+                    # when the process is reaped. Caught on camera: a single
+                    # frame (1/30s) of stale text winning a race against an
+                    # immediate blank_framebuffer() call, sandwiched cleanly
+                    # between two black frames - meaning the blank landed
+                    # too early, before the delayed restore fired. A short
+                    # pause first gives that async teardown time to finish
+                    # before the blank becomes the actual last write.
+                    time.sleep(0.15)
                     blank_framebuffer()
 
                 current_process = start_fbi(paths, interval)

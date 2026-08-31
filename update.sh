@@ -34,6 +34,16 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Timestamped (matches the other log files' format) so a step's actual
+# wall-clock duration is readable directly off update.log instead of
+# guessed at. Not used for --check's output below - that's machine-parsed
+# KEY=VALUE by parse_update_check_output() in app.py, and the progress
+# bar's own marker matching (UPDATE_STAGES in templates/index.html) is a
+# substring search, so a timestamp prefix here doesn't break it.
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*"
+}
+
 # Never let git block on a credential/host-key prompt with no TTY attached -
 # fail fast instead of hanging. This can run fully detached with no one
 # watching, so a hang would just sit there eating memory on a Zero W.
@@ -43,7 +53,7 @@ export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"
 LOCK_FILE="$(pwd)/.update.lock"
 exec 200>"$LOCK_FILE"
 if ! flock -n 200; then
-    echo "An update is already in progress." >&2
+    log "An update is already in progress." >&2
     exit 1
 fi
 
@@ -51,7 +61,7 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
 
 if [[ -z "$upstream" ]]; then
-    echo "Branch '$branch' has no upstream configured - can't check for updates." >&2
+    log "Branch '$branch' has no upstream configured - can't check for updates." >&2
     exit 1
 fi
 
@@ -80,54 +90,54 @@ if [[ "${1:-}" == "--check" ]]; then
     exit 0
 fi
 
-echo "=== update started $(date -Iseconds) ==="
-echo "Currently at $current_sha ($current_msg)"
+log "=== update started ==="
+log "Currently at $current_sha ($current_msg)"
 
 if [[ "$behind" == "0" ]]; then
-    echo "Already up to date."
+    log "Already up to date."
     exit 0
 fi
 
 if [[ "$ahead" != "0" ]]; then
-    echo "Local branch has $ahead commit(s) not on $upstream - diverged, not auto-merging." >&2
-    echo "Resolve this by hand over SSH (e.g. git status / git log)." >&2
+    log "Local branch has $ahead commit(s) not on $upstream - diverged, not auto-merging." >&2
+    log "Resolve this by hand over SSH (e.g. git status / git log)." >&2
     exit 1
 fi
 
-echo "Pulling $behind commit(s) from $upstream"
+log "Pulling $behind commit(s) from $upstream"
 before_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
 git merge --ff-only "$upstream"
 after_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
 
 if [[ -n "$system_changes" ]]; then
-    echo "This update touches system-level files:"
+    log "This update touches system-level files:"
     echo "$system_changes" | sed 's/^/  /'
-    echo "Applying them with install.sh (as root, no reboot)"
+    log "Applying them with install.sh (as root, no reboot)"
     if sudo -n "$(pwd)/install.sh" -y; then
-        echo "install.sh applied cleanly."
+        log "install.sh applied cleanly."
     else
-        echo "install.sh failed or isn't permitted yet (see above) - system-" >&2
-        echo "level config is unchanged. The code update below still applies;" >&2
-        echo "re-run install.sh over SSH to pick up the rest by hand." >&2
+        log "install.sh failed or isn't permitted yet (see above) - system-" >&2
+        log "level config is unchanged. The code update below still applies;" >&2
+        log "re-run install.sh over SSH to pick up the rest by hand." >&2
     fi
 fi
 
 if [[ "$before_reqs" != "$after_reqs" ]]; then
-    echo "requirements.txt changed - reinstalling dependencies"
+    log "requirements.txt changed - reinstalling dependencies"
     venv/bin/pip install -r requirements.txt -q
 fi
 
-echo "Now at $(git rev-parse --short HEAD)"
+log "Now at $(git rev-parse --short HEAD)"
 
-echo "Restarting slideshow"
+log "Restarting slideshow"
 sudo -n /usr/bin/systemctl restart posterframe-slideshow
 
 # Non-fatal: on the very first update after posterframe-plex.service was
 # added, the sudoers grant for it only exists if the install.sh step above
 # already ran and succeeded. Don't let this block the web app restart
 # below, which matters far more and must always run.
-echo "Restarting Plex monitor"
-sudo -n /usr/bin/systemctl restart posterframe-plex || echo "Could not restart posterframe-plex (see above) - not fatal" >&2
+log "Restarting Plex monitor"
+sudo -n /usr/bin/systemctl restart posterframe-plex || log "Could not restart posterframe-plex (see above) - not fatal" >&2
 
-echo "Restarting web app (this connection will drop)"
+log "Restarting web app (this connection will drop)"
 sudo -n /usr/bin/systemctl restart posterframe-web
