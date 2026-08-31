@@ -11,10 +11,8 @@
   /* "Control Room" - a dashboard rebuild rather than a catalog cosplay,
      with Marquee's labeled sidebar grafted on (grouped, has real value
      once there are ~8 sections). Keeps the app's own existing accent
-     color mechanism untouched; the only new backend piece is a
-     lightness-adjusted dark-mode variant of that same color (see
-     accent_dark in app.py), since this is also the first time the app
-     has ever needed to render on a light ground. */
+     color mechanism untouched; the same accent_color is used unmodified
+     in both themes so the picked color reads accurately either way. */
   :root{
     --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eef0f3; --border:#dde1e6;
     --text:#191c20; --text-dim:#454b52; --text-muted:#6b7280;
@@ -30,8 +28,8 @@
     :root:not([data-theme="light"]){
       --bg:#0d1013; --surface:#161a1e; --surface-2:#1d2227; --border:#262c32;
       --text:#e7ebee; --text-dim:#b7bec5; --text-muted:#7b848c;
-      --accent:{{ accent_dark }}; --accent-dim:{{ accent_dim }};
-      --accent-hover:{{ accent_dark_hover }}; --accent-text:{{ accent_dark_text }};
+      --accent:{{ accent_color }}; --accent-dim:{{ accent_dim }};
+      --accent-hover:{{ accent_hover }}; --accent-text:{{ accent_text }};
       --accent-tint:color-mix(in srgb, var(--accent) 16%, transparent);
       --success:#57c37f; --success-tint:rgba(87,195,127,.14);
       --warn:#e0a83a; --warn-tint:rgba(224,168,58,.14);
@@ -42,8 +40,8 @@
   :root[data-theme="dark"]{
     --bg:#0d1013; --surface:#161a1e; --surface-2:#1d2227; --border:#262c32;
     --text:#e7ebee; --text-dim:#b7bec5; --text-muted:#7b848c;
-    --accent:{{ accent_dark }}; --accent-dim:{{ accent_dim }};
-    --accent-hover:{{ accent_dark_hover }}; --accent-text:{{ accent_dark_text }};
+    --accent:{{ accent_color }}; --accent-dim:{{ accent_dim }};
+    --accent-hover:{{ accent_hover }}; --accent-text:{{ accent_text }};
     --accent-tint:color-mix(in srgb, var(--accent) 16%, transparent);
     --success:#57c37f; --success-tint:rgba(87,195,127,.14);
     --warn:#e0a83a; --warn-tint:rgba(224,168,58,.14);
@@ -261,6 +259,7 @@
   .flash{padding:12px 14px;border-radius:8px;font-size:.83rem;margin-bottom:16px}
   .flash.ok{background:var(--success-tint);color:var(--success);border:1px solid rgba(80,200,120,.3)}
   .flash.err{background:var(--danger-tint);color:var(--danger);border:1px solid var(--danger-dim)}
+  .flash.warn{background:var(--warn-tint);color:var(--warn);border:1px solid rgba(224,168,58,.35)}
   .progress-labels{display:flex;justify-content:space-between;gap:12px;
     font-size:.78rem;margin-bottom:8px}
   .progress-labels .device{color:var(--text);font-weight:600}
@@ -835,6 +834,18 @@
             <input type="time" id="reboot_time" name="reboot_time" value="{{ reboot_time }}" form="settingsForm">
           </div>
         </section>
+
+        <section class="panel">
+          <p class="panel-label">Poster sync</p>
+          <div class="field-group">
+            <label for="discovery_sync_time" class="field-label">Daily sync time</label>
+            <input type="time" id="discovery_sync_time" name="discovery_sync_time" value="{{ discovery_sync_time }}" form="settingsForm">
+            <p class="note" style="margin:8px 0 0;">
+              Applies to whichever discovery source is active &mdash; set on the
+              Discovery tab.
+            </p>
+          </div>
+        </section>
       </div>
 
       <!-- DISCOVERY -->
@@ -845,7 +856,8 @@
           <p class="note">
             Only one source pulls posters at a time &mdash; scheduled and
             manual syncs both check this, so the two can never fight over
-            the rotation. Takes effect after Save.
+            the rotation. Takes effect after Save. Daily sync time is set on
+            the Schedule tab.
           </p>
           <div style="display:flex;gap:8px;">
             <label class="checkbox-row" style="flex:1;">
@@ -858,11 +870,6 @@
                      {{ 'checked' if discovery_source == 'justwatch' else '' }} onchange="syncDiscoverySource()">
               <span>JustWatch</span>
             </label>
-          </div>
-
-          <div class="field-group" style="margin-top:18px;">
-            <label for="discovery_sync_time" class="field-label">Daily sync time</label>
-            <input type="time" id="discovery_sync_time" name="discovery_sync_time" value="{{ discovery_sync_time }}" form="settingsForm">
           </div>
         </section>
 
@@ -1260,8 +1267,7 @@
               <input type="text" id="accent_hex" class="hex-input" value="{{ accent_color }}" maxlength="7"
                      oninput="document.getElementById('accent_color').value=this.value">
             </div>
-            <p class="note" style="margin:8px 0 0;">Used for both light and dark mode - dark mode
-              automatically lightens it for contrast against a dark background.</p>
+            <p class="note" style="margin:8px 0 0;">Used as-is in both light and dark mode.</p>
           </div>
         </section>
 
@@ -1281,6 +1287,7 @@
           </form>
 
           <div id="updateProgress" style="display:none; margin-top:18px;">
+            <p class="flash warn">Do not power off or unplug the frame while an update is in progress.</p>
             <div class="progress-labels">
               <span class="device" id="updateDeviceStatus">Starting update&hellip;</span>
               <span class="page" id="updatePageStatus">Connected</span>
@@ -1288,6 +1295,7 @@
             <div class="progress-track">
               <div class="progress-fill" id="updateProgressFill"></div>
             </div>
+            <p class="note" id="updateEstimate" style="margin-top:8px;"></p>
             <p id="updateFinalNote" style="display:none;"></p>
           </div>
         </section>
@@ -1334,8 +1342,17 @@
   const SUN = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
   const MOON = '<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>';
 
+  // "system" (no data-theme attribute) can already render dark, via the
+  // prefers-color-scheme media query - so the icon and the click cycle both
+  // need to know what's actually showing, not just the explicit attribute.
+  function effectiveTheme(){
+    const explicit = root.getAttribute('data-theme');
+    if(explicit === 'dark' || explicit === 'light') return explicit;
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+
   function paintThemeIcon(){
-    themeIcon.innerHTML = root.getAttribute('data-theme') === 'dark' ? MOON : SUN;
+    themeIcon.innerHTML = effectiveTheme() === 'dark' ? MOON : SUN;
   }
   try{
     const savedTheme = localStorage.getItem('posterframe_theme');
@@ -1345,7 +1362,16 @@
 
   themeBtn.addEventListener('click', ()=>{
     const cur = root.getAttribute('data-theme');
-    const next = cur === 'dark' ? 'light' : cur === 'light' ? null : 'dark';
+    let next;
+    if(cur === null){
+      // Leaving "system": jump straight to the explicit opposite of
+      // whatever's currently rendered, so the first click always produces
+      // a visible change instead of sometimes re-landing on the same
+      // appearance the OS was already showing.
+      next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+    }else{
+      next = cur === 'dark' ? 'light' : null;
+    }
     if(next) root.setAttribute('data-theme', next); else root.removeAttribute('data-theme');
     try{ next ? localStorage.setItem('posterframe_theme', next) : localStorage.removeItem('posterframe_theme'); }catch(e){}
     paintThemeIcon();
@@ -1714,11 +1740,23 @@
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const updateResult = document.getElementById('updateResult');
   const updateForm = document.getElementById('updateForm');
+  const updateEstimate = document.getElementById('updateEstimate');
 
   function escapeHtml(s){
     return String(s == null ? '' : s).replace(/[&<>"']/g, c=>(
       {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
     ));
+  }
+
+  // Honest ranges, not a fake precise countdown - real-world figures from
+  // actually timing this on a Pi Zero W (see CLAUDE.md's Web UI gotchas):
+  // a plain code update restarts in well under a minute, one that also
+  // re-runs install.sh (system/dependency changes) can take several.
+  let pendingSystemChanges = false;
+  function estimateRangeText(systemChanges){
+    return systemChanges
+      ? 'usually 2-5 minutes (this update also reinstalls system files)'
+      : 'usually under a minute';
   }
 
   // Prefer "v1.5.0: Fix schedule bug" (parsed from a "[v1.5.0] ..." commit
@@ -1759,6 +1797,7 @@
           return;
         }
 
+        pendingSystemChanges = !!data.system_changes;
         const latest = describeCommit(data.remote_version, data.remote_title, data.remote_message, data.remote_sha);
         let html = '<p class="flash ok">'+data.behind+' update(s) available &mdash; latest: '+latest+'</p>';
         if(data.system_changes){
@@ -1767,6 +1806,8 @@
             +'longer. It won’t reboot on its own; if it changes boot console settings, reboot '
             +'from the Power tab below when convenient.</p>';
         }
+        html += '<p class="flash warn">Once started, do not power off or unplug the frame - '
+          +'estimated time: '+estimateRangeText(pendingSystemChanges)+'.</p>';
         updateResult.innerHTML = html;
         updateForm.style.display = 'block';
       }).catch(()=>{
@@ -1875,6 +1916,27 @@
     updateProgressFill.classList.add('indeterminate');
   }
 
+  let updateStartedAt = null;
+  let updateElapsedTimer = null;
+  function startElapsedTimer(){
+    updateStartedAt = Date.now();
+    const rangeText = estimateRangeText(pendingSystemChanges);
+    function tick(){
+      const secs = Math.round((Date.now() - updateStartedAt) / 1000);
+      const mins = Math.floor(secs / 60);
+      const elapsed = mins > 0 ? (mins+'m '+(secs % 60)+'s') : (secs+'s');
+      updateEstimate.textContent = 'Elapsed: '+elapsed+' (estimate: '+rangeText+')';
+    }
+    tick();
+    updateElapsedTimer = setInterval(tick, 1000);
+  }
+  function stopElapsedTimer(){
+    if(updateElapsedTimer){
+      clearInterval(updateElapsedTimer);
+      updateElapsedTimer = null;
+    }
+  }
+
   let updateHadDisconnect = false;
   // update.sh's own process can be reaped (pgrep stops matching it) a beat
   // before the old web server's socket actually closes - systemd delivers
@@ -1901,6 +1963,7 @@
         updatePageStatus.textContent = 'Reconnected';
         updateDeviceStatus.textContent = 'Update complete';
         setBarPct(100);
+        stopElapsedTimer();
         startReloadCountdown();
         return;
       }
@@ -1918,6 +1981,7 @@
           updateFinalNote.className = stage.error ? 'flash err' : 'flash ok';
           updateFinalNote.textContent = lastLine(data.content);
           checkUpdateBtn.disabled = false;
+          stopElapsedTimer();
           return;
         }
       }
@@ -1940,6 +2004,7 @@
         updateFinalNote.className = 'flash err';
         updateFinalNote.textContent = lastLine(data.content) || 'No output.';
         checkUpdateBtn.disabled = false;
+        stopElapsedTimer();
         return;
       }
 
@@ -1984,6 +2049,7 @@
       updateDeviceStatus.textContent = 'Sending update request…';
       updatePageStatus.textContent = 'Connected';
       setBarPct(2);
+      startElapsedTimer();
 
       fetch('/update', {method: 'POST'})
         .then(()=> pollUpdateProgress())

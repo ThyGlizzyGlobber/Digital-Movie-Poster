@@ -690,11 +690,6 @@ def index():
     git_sha, git_message, git_version = get_git_info()
     log_sources = {key: label for key, (label, _) in LOG_SOURCES.items()}
 
-    # Same picked color throughout - just a lighter variant for use as the
-    # accent against a dark ground (control-room-style layout added a real
-    # light/dark mode; before this the app only ever rendered on dark, so
-    # the accent never needed a second, dark-tuned variant).
-    accent_dark = adjust_lightness(accent_color, 1.3)
     next_sync = next_daily_sync(discovery_sync_time) - datetime.now()
     next_sync_hours, remainder = divmod(int(next_sync.total_seconds()), 3600)
     next_sync_minutes = remainder // 60
@@ -709,9 +704,6 @@ def index():
         accent_dim=adjust_lightness(accent_color, 0.6),
         accent_hover=adjust_lightness(accent_color, 1.2),
         accent_text=contrasting_text_color(accent_color),
-        accent_dark=accent_dark,
-        accent_dark_hover=adjust_lightness(accent_color, 1.5),
-        accent_dark_text=contrasting_text_color(accent_dark),
         next_sync_hours=next_sync_hours,
         next_sync_minutes=next_sync_minutes,
         active_appearance=active_appearance,
