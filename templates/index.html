@@ -459,7 +459,7 @@
           <div class="advanced-body">
             <div class="field-group">
               <label for="poster_max_width" class="field-label">Working width (px)</label>
-              <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width }}" form="settingsForm">
+              <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
                 Posters are downloaded at full resolution and kept that way, but
                 scaled to this width before the grain is applied. Match it to your
@@ -501,7 +501,7 @@
 
           <div class="field-group">
             <label for="interval_minutes" class="field-label">Minutes between posters</label>
-            <input type="number" id="interval_minutes" name="interval_minutes" min="0.1" step="any" value="{{ interval_minutes }}" form="settingsForm">
+            <input type="number" id="interval_minutes" name="interval_minutes" min="0.1" step="any" value="{{ interval_minutes|numfmt }}" form="settingsForm">
           </div>
 
           <div class="field-group">
@@ -660,7 +660,7 @@
 
             <div class="field-group">
               <label for="framed_cast_count" class="field-label">Cast members to list</label>
-              <input type="number" id="framed_cast_count" name="framed_cast_count" min="0" max="10" value="{{ framed_cast_count }}" form="settingsForm">
+              <input type="number" id="framed_cast_count" name="framed_cast_count" min="0" max="10" value="{{ framed_cast_count|numfmt }}" form="settingsForm">
             </div>
 
             <div class="field-group">
@@ -707,8 +707,8 @@
             <div class="field-group">
               <label class="field-label">HDMI output resolution (px)</label>
               <div class="color-row">
-                <input type="number" id="hdmi_width" name="hdmi_width" min="100" max="8000" value="{{ hdmi_width }}" placeholder="Width" form="settingsForm">
-                <input type="number" id="hdmi_height" name="hdmi_height" min="100" max="8000" value="{{ hdmi_height }}" placeholder="Height" form="settingsForm">
+                <input type="number" id="hdmi_width" name="hdmi_width" min="100" max="8000" value="{{ hdmi_width|numfmt }}" placeholder="Width" form="settingsForm">
+                <input type="number" id="hdmi_height" name="hdmi_height" min="100" max="8000" value="{{ hdmi_height|numfmt }}" placeholder="Height" form="settingsForm">
               </div>
               <p class="note" style="margin:6px 0 0;">The physical signal sent to the screen - normally its true
                 native resolution, so it looks sharp regardless of what the Pi renders at. Forcing the new mode
@@ -718,8 +718,8 @@
             <div class="field-group">
               <label class="field-label">Poster render resolution (px)</label>
               <div class="color-row">
-                <input type="number" id="display_width" name="display_width" min="100" max="8000" value="{{ display_width }}" placeholder="Width" form="settingsForm">
-                <input type="number" id="display_height" name="display_height" min="100" max="8000" value="{{ display_height }}" placeholder="Height" form="settingsForm">
+                <input type="number" id="display_width" name="display_width" min="100" max="8000" value="{{ display_width|numfmt }}" placeholder="Width" form="settingsForm">
+                <input type="number" id="display_height" name="display_height" min="100" max="8000" value="{{ display_height|numfmt }}" placeholder="Height" form="settingsForm">
               </div>
               <button type="button" class="primary" id="detectDisplayBtn" style="margin-top:10px;">Detect display</button>
               <div id="detectDisplayResult"></div>
@@ -777,7 +777,7 @@
 
           <div class="field-group">
             <label for="boot_image_seconds" class="field-label">Logo duration (seconds)</label>
-            <input type="number" id="boot_image_seconds" name="boot_image_seconds" min="0" max="30" step="0.5" value="{{ boot_image_seconds }}" form="settingsForm">
+            <input type="number" id="boot_image_seconds" name="boot_image_seconds" min="0" max="30" step="0.5" value="{{ boot_image_seconds|numfmt }}" form="settingsForm">
           </div>
         </section>
 
@@ -885,7 +885,7 @@
 
           <div class="field-group">
             <label for="poster_expiry_days" class="field-label">Days after release</label>
-            <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days }}" form="settingsForm">
+            <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days|numfmt }}" form="settingsForm">
           </div>
 
           <div class="field-group">
@@ -962,7 +962,7 @@
                 <span>Trending this week</span>
               </label>
               <input type="number" name="limit_movie_trending" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_trending', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('movie_trending', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -972,7 +972,7 @@
                 <span>Popular now</span>
               </label>
               <input type="number" name="limit_movie_popular" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_popular', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('movie_popular', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -982,7 +982,7 @@
                 <span>In cinemas now</span>
               </label>
               <input type="number" name="limit_movie_now_playing" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_now_playing', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('movie_now_playing', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -992,7 +992,7 @@
                 <span>Coming soon</span>
               </label>
               <input type="number" name="limit_movie_upcoming" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_upcoming', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('movie_upcoming', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -1006,7 +1006,7 @@
                 <span>Trending this week</span>
               </label>
               <input type="number" name="limit_tv_trending" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_trending', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('tv_trending', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -1016,7 +1016,7 @@
                 <span>Popular now</span>
               </label>
               <input type="number" name="limit_tv_popular" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_popular', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('tv_popular', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -1026,7 +1026,7 @@
                 <span>Currently airing</span>
               </label>
               <input type="number" name="limit_tv_on_the_air" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_on_the_air', tmdb_max_per_source) }}"
+                     value="{{ tmdb_source_limits.get('tv_on_the_air', tmdb_max_per_source)|numfmt }}"
                      title="How many posters from this category"
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
@@ -1044,7 +1044,7 @@
           <div class="advanced-body">
             <div class="field-group">
               <label for="tmdb_min_popularity" class="field-label">Minimum popularity &mdash; released titles</label>
-              <input type="number" id="tmdb_min_popularity" name="tmdb_min_popularity" min="0" max="2000" step="5" value="{{ tmdb_min_popularity }}" form="settingsForm">
+              <input type="number" id="tmdb_min_popularity" name="tmdb_min_popularity" min="0" max="2000" step="5" value="{{ tmdb_min_popularity|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
                 Applies to everything except Coming soon. Filters out limited and
                 arthouse cinema runs. Around 30&ndash;50 works well. Use 0 for no filter.
@@ -1053,7 +1053,7 @@
 
             <div class="field-group">
               <label for="tmdb_min_popularity_upcoming" class="field-label">Minimum popularity &mdash; coming soon</label>
-              <input type="number" id="tmdb_min_popularity_upcoming" name="tmdb_min_popularity_upcoming" min="0" max="2000" step="1" value="{{ tmdb_min_popularity_upcoming }}" form="settingsForm">
+              <input type="number" id="tmdb_min_popularity_upcoming" name="tmdb_min_popularity_upcoming" min="0" max="2000" step="1" value="{{ tmdb_min_popularity_upcoming|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
                 Kept separate because unreleased films score far lower &mdash; popularity
                 tracks current attention, and a film nobody can watch yet has little
@@ -1064,7 +1064,7 @@
 
             <div class="field-group">
               <label for="tmdb_upcoming_months" class="field-label">Coming soon window (months)</label>
-              <input type="number" id="tmdb_upcoming_months" name="tmdb_upcoming_months" min="1" max="36" step="1" value="{{ tmdb_upcoming_months }}" form="settingsForm">
+              <input type="number" id="tmdb_upcoming_months" name="tmdb_upcoming_months" min="1" max="36" step="1" value="{{ tmdb_upcoming_months|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
                 How far ahead "Coming soon" looks. TMDb's own upcoming list only spans
                 a few weeks, which is why major releases months away never showed up.
@@ -1111,7 +1111,7 @@
 
           <div class="field-group" style="margin-top:24px;">
             <label for="justwatch_max_titles" class="field-label">How many posters to sync</label>
-            <input type="number" id="justwatch_max_titles" name="justwatch_max_titles" min="1" max="40" step="1" value="{{ justwatch_max_titles }}" form="settingsForm">
+            <input type="number" id="justwatch_max_titles" name="justwatch_max_titles" min="1" max="40" step="1" value="{{ justwatch_max_titles|numfmt }}" form="settingsForm">
           </div>
 
           <p class="note" style="margin:12px 0 0;">
@@ -1199,13 +1199,13 @@
             <div class="field-group">
               <label for="plex_poll_seconds" class="field-label">Check interval (seconds)</label>
               <input type="number" id="plex_poll_seconds" name="plex_poll_seconds" min="5" max="120" step="1"
-                     value="{{ plex_poll_seconds }}" form="settingsForm">
+                     value="{{ plex_poll_seconds|numfmt }}" form="settingsForm">
             </div>
 
             <div class="field-group">
               <label for="plex_stop_delay_seconds" class="field-label">Wait before reverting (seconds)</label>
               <input type="number" id="plex_stop_delay_seconds" name="plex_stop_delay_seconds" min="0" max="600" step="5"
-                     value="{{ plex_stop_delay_seconds }}" form="settingsForm">
+                     value="{{ plex_stop_delay_seconds|numfmt }}" form="settingsForm">
               <p class="note" style="margin:6px 0 0;">How long playback has to genuinely stop before the frame
                 switches back to normal rotation &mdash; bridges brief pauses and gaps between episodes so
                 Now Playing doesn't flicker off and back on. 0 reverts immediately.</p>

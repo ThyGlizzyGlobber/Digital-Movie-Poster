@@ -18,6 +18,25 @@ from PIL import Image, ImageFilter, ImageEnhance
 
 app = Flask(__name__)
 
+
+@app.template_filter("numfmt")
+def numfmt(value):
+    """Trim a numeric display value down to its shortest exact form: 5.0 -> 5,
+    5.50 -> 5.5, but a genuine 5.5 is left alone. Several settings are stored
+    as floats (old form submits, JS defaults, config.json edited by hand) even
+    when the user only ever entered a whole number, which made the number
+    inputs across tabs inconsistent - some showing "5", others "5.0" for the
+    same kind of value."""
+    if value is None or value == "":
+        return value
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return value
+    if f == int(f):
+        return str(int(f))
+    return repr(f)
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 POSTER_DIR = os.path.join(BASE_DIR, "static", "posters")
 ORIGINAL_DIR = os.path.join(BASE_DIR, "originals")
