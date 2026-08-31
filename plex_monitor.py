@@ -172,8 +172,15 @@ def activate(server_url, headers, session, cast_count=4):
 
 
 def deactivate():
-    requests.post(f"{APP_BASE}/delete/{POSTER_FILENAME}", timeout=15).raise_for_status()
+    # Clear the flag before deleting the file, not after: these are two
+    # separate HTTP calls with no atomicity between them, and if the second
+    # one never runs (posterframe-web restarting mid-sequence, this process
+    # getting killed, etc.) this ordering means the failure mode is a
+    # harmless orphaned file rather than "active" pointing at nothing -
+    # slideshow.py has its own fallback for a stale flag too, but avoiding
+    # the stuck state here in the first place is better than relying on it.
     requests.post(f"{APP_BASE}/plex/now-playing", json={"active": False}, timeout=15).raise_for_status()
+    requests.post(f"{APP_BASE}/delete/{POSTER_FILENAME}", timeout=15).raise_for_status()
 
 
 def main():

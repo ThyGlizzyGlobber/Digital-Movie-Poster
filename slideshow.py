@@ -629,7 +629,18 @@ def main():
             # and force the appearance's status text to "NOW PLAYING".
             plex_state = config.get("plex_now_playing", {})
             plex_filename = plex_state.get("filename")
-            plex_active = bool(plex_state.get("active") and plex_filename)
+            # Trust the flag only as far as the file it points at actually
+            # existing. plex_monitor.py's deactivate() clears the flag and
+            # deletes the file via two separate HTTP calls - if the process
+            # (or posterframe-web) gets interrupted between them, "active"
+            # can be stuck true with nothing left to show. Falling back to
+            # normal rotation here means a stale flag never blanks the
+            # display outright; it just quietly stops overriding anything
+            # until plex_monitor.py or a reconnect sorts the flag out.
+            plex_active = bool(
+                plex_state.get("active") and plex_filename
+                and os.path.exists(os.path.join(POSTER_DIR, plex_filename))
+            )
             if plex_active:
                 order = [plex_filename]
 

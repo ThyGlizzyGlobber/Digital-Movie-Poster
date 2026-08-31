@@ -255,17 +255,22 @@ fi
 # config.txt since it's a separate, still-firmware-level concern (treat the
 # port as connected even with no/slow EDID response) - it doesn't select a
 # mode, so disable_fw_kms_setup doesn't affect it.
-# The forced resolution itself comes from config.json's display_width/
-# display_height (already the user-facing "Display resolution" setting in
-# the web UI's Display tab) rather than being hardcoded - swapped when
-# rotation_degrees is 90/270, matching how slideshow.py's canvas ends up
-# physically oriented after the same rotation gets applied before handing
+# The forced resolution itself comes from config.json's hdmi_width/
+# hdmi_height (the web UI's "HDMI output resolution" field, separate from
+# "Poster render resolution" - the two used to be the same field, but a
+# display far more capable than the Pi driving it needs the physical signal
+# forced to its true native resolution while the render canvas stays modest
+# enough for the Pi to actually keep up composting/graining it - see
+# /detect-display in app.py, which suggests exactly that split) - swapped
+# when rotation_degrees is 90/270, matching how slideshow.py's canvas ends
+# up physically oriented after the same rotation gets applied before handing
 # frames to fbi. Falls back to 1920x1080 when config.json doesn't exist yet
 # (a fresh install, before the web app has ever run to create it). Changing
-# Display resolution in the web UI does NOT re-run this by itself - install.sh
-# only runs automatically when an update touches systemd/install.sh - so a
-# resolution change made purely in the UI needs `sudo install.sh -y` run by
-# hand afterward to actually re-force the new mode.
+# either resolution field in the web UI does NOT re-run this by itself -
+# install.sh only runs automatically when an update touches systemd/
+# install.sh - so a resolution change made purely in the UI needs
+# `sudo install.sh -y` run by hand afterward to actually re-force the new
+# mode.
 # ---------------------------------------------------------------------------
 CONFIG_TXT=""
 for candidate in /boot/firmware/config.txt /boot/config.txt; do
@@ -296,8 +301,8 @@ try:
     c = json.load(open('$BASE_DIR/config.json'))
 except Exception:
     c = {}
-w = int(c.get('display_width') or 1920)
-h = int(c.get('display_height') or 1080)
+w = int(c.get('hdmi_width') or c.get('display_width') or 1920)
+h = int(c.get('hdmi_height') or c.get('display_height') or 1080)
 if c.get('rotation_degrees') in (90, 270):
     w, h = h, w
 print(f'{w}x{h}')

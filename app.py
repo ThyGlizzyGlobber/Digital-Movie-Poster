@@ -346,6 +346,7 @@ def load_config():
         "display_width": 1080,
         "display_height": 1920,
         "grain_intensity": DEFAULT_GRAIN_INTENSITY,
+        "grain_enabled": True,
         "tmdb_enabled": True,
         "tmdb_schedule_enabled": True,
         "boot_image_seconds": 3.0,
@@ -386,6 +387,19 @@ def load_config():
         if key not in config:
             config[key] = value
             changed = True
+
+    # hdmi_width/height (the resolution install.sh forces the physical HDMI
+    # signal to) used to just be display_width/height - splitting them apart
+    # is what lets a render canvas stay modest on weak hardware while the
+    # actual signal still matches a display's true native resolution. Default
+    # to whatever display_width/height already are so existing single-display
+    # setups see no behavior change until Detect Display is run again.
+    if "hdmi_width" not in config:
+        config["hdmi_width"] = config.get("display_width", 1080)
+        changed = True
+    if "hdmi_height" not in config:
+        config["hdmi_height"] = config.get("display_height", 1920)
+        changed = True
 
     if "appearances" not in config:
         # One-time migration: these used to be flat top-level keys. Pull
@@ -495,11 +509,17 @@ def describe_poster(filename, meta):
     }
 
 
-def prepare_poster(image, intensity, max_width):
-    """Downscale to the working width, then apply grain.
+def prepare_poster(image, intensity, max_width, grain_enabled=True):
+    """Downscale to the working width, then apply grain unless disabled.
 
     Order matters: graining a full-resolution image and shrinking it
-    afterwards both wastes time and blurs the grain into mush."""
+    afterwards both wastes time and blurs the grain into mush.
+
+    grain_enabled=False skips apply_film_grain entirely rather than calling
+    it with intensity=0 - the numpy noise array, Gaussian blur, and contrast/
+    color passes all run regardless of intensity, so zero-strength grain
+    costs the same as full-strength grain. On weak hardware (a Pi Zero W)
+    that cost is real; skipping the call is what actually saves it."""
     img = image.convert("RGB")
 
     if max_width and img.width > max_width:
@@ -507,6 +527,9 @@ def prepare_poster(image, intensity, max_width):
         img = img.resize(
             (max_width, max(1, round(img.height * ratio))), Image.LANCZOS
         )
+
+    if not grain_enabled:
+        return img
 
     return apply_film_grain(img, intensity=intensity)
 
@@ -552,9 +575,12 @@ def index():
     saturation_pct = round(config.get("saturation", 1.0) * 100)
     display_width = config.get("display_width", 1080)
     display_height = config.get("display_height", 1920)
+    hdmi_width = config.get("hdmi_width", display_width)
+    hdmi_height = config.get("hdmi_height", display_height)
     classic_display_font = classic.get("display_font", {})
     framed_top_font = framed.get("top_font", {})
     grain_intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
+    grain_enabled = config.get("grain_enabled", True)
     tmdb_enabled = config.get("tmdb_enabled", True)
     tmdb_schedule_enabled = config.get("tmdb_schedule_enabled", True)
     boot_image_seconds = config.get("boot_image_seconds", 3.0)
@@ -621,7 +647,10 @@ def index():
         saturation_pct=saturation_pct,
         display_width=display_width,
         display_height=display_height,
+        hdmi_width=hdmi_width,
+        hdmi_height=hdmi_height,
         grain_intensity=grain_intensity,
+        grain_enabled=grain_enabled,
         tmdb_enabled=tmdb_enabled,
         tmdb_schedule_enabled=tmdb_schedule_enabled,
         boot_image_seconds=boot_image_seconds,
@@ -666,6 +695,7 @@ def upload():
 
     config = load_config()
     intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
+    grain_enabled = config.get("grain_enabled", True)
     max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
 
     filename = secure_filename(file.filename)
@@ -677,7 +707,7 @@ def upload():
     # later just needs a re-grain, not a re-download.
     image.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
 
-    prepare_poster(image, intensity, max_width).save(os.path.join(POSTER_DIR, filename))
+    prepare_poster(image, intensity, max_width, grain_enabled).save(os.path.join(POSTER_DIR, filename))
 
     if filename not in config["order"]:
         config["order"].append(filename)
@@ -692,9 +722,11 @@ def regrain():
     if intensity is None:
         return redirect(url_for("index"))
     intensity = max(0.0, min(0.3, intensity))
+    grain_enabled = "grain_enabled" in request.form
 
     config = load_config()
     config["grain_intensity"] = intensity
+    config["grain_enabled"] = grain_enabled
     save_config(config)
 
     reprocessed = 0
@@ -706,13 +738,14 @@ def regrain():
             image = Image.open(original_path)
             image.load()
             prepare_poster(image, intensity,
-                           config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
+                           config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH),
+                           grain_enabled,
                            ).save(os.path.join(POSTER_DIR, filename))
             reprocessed += 1
         except Exception as e:
             print(f"Failed to regrain {filename}: {e}")
 
-    print(f"Reprocessed {reprocessed} poster(s) at grain intensity {intensity}")
+    print(f"Reprocessed {reprocessed} poster(s), grain {'on' if grain_enabled else 'off'} (intensity {intensity})")
 
     return redirect(url_for("index"))
 
@@ -874,6 +907,7 @@ def tmdb_add_link():
     filename = f"tmdbpin_{media}_{item_id}.jpg"
     config = load_config()
     intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
+    grain_enabled = config.get("grain_enabled", True)
 
     from io import BytesIO
     source = Image.open(BytesIO(image.content))
@@ -881,7 +915,7 @@ def tmdb_add_link():
 
     source.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
     prepare_poster(source, intensity,
-        config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)).save(os.path.join(POSTER_DIR, filename))
+        config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH), grain_enabled).save(os.path.join(POSTER_DIR, filename))
 
     if filename not in config["order"]:
         config["order"].append(filename)
@@ -1380,6 +1414,27 @@ def parse_edid_preferred_resolution(edid_bytes):
     return h_active, v_active
 
 
+def detect_pi_model():
+    try:
+        with open("/proc/device-tree/model") as f:
+            return f.read().strip("\x00").strip()
+    except OSError:
+        return None
+
+
+def safe_render_long_edge(model):
+    """A render resolution ceiling (longest edge, px) for hardware too weak
+    to composite/grain a full-size image in reasonable time - see
+    apply_film_grain's unconditional numpy/blur/enhance cost. Zero W is the
+    only board actually measured (CLAUDE.md's ~13s/poster baseline is at
+    today's ~1920px long edge), so it's the only one capped; everything else
+    (Pi 4/5, unrecognized future boards) is trusted uncapped rather than
+    guessing at tiers with no measurements behind them."""
+    if model and "Zero" in model:
+        return 1920
+    return None
+
+
 @app.route("/detect-display")
 def detect_display():
     """On-demand only - never called automatically at boot. This project
@@ -1388,8 +1443,12 @@ def detect_display():
     running this same read unattended on every boot would silently reproduce
     that exact bug. Safe here because a user triggers it long after boot,
     once the display is definitely awake, and only ever pre-fills the
-    Display resolution fields for review - saving is still a separate,
-    explicit step.
+    resolution fields for review - saving is still a separate, explicit step.
+    Also suggests a capped render resolution when running on weak hardware
+    (see safe_render_long_edge) - the raw detected size still goes to
+    hdmi_width/height (the physical signal should match the display's true
+    native resolution regardless of what the Pi can comfortably render;
+    fbi's own autoscale bridges the gap - see install.sh).
 
     Known limitation, confirmed on a Pi Zero W running vc4-fkms-v3d with
     disable_fw_kms_setup=1 (this project's actual target hardware): once
@@ -1426,7 +1485,23 @@ def detect_display():
         return jsonify({"ok": False, "error": "Couldn't find a usable preferred resolution in the display's EDID."}), 502
 
     width, height = result
-    return jsonify({"ok": True, "width": width, "height": height})
+
+    pi_model = detect_pi_model()
+    cap = safe_render_long_edge(pi_model)
+    render_width, render_height = width, height
+    if cap and max(width, height) > cap:
+        scale = cap / max(width, height)
+        render_width, render_height = round(width * scale), round(height * scale)
+
+    return jsonify({
+        "ok": True,
+        "width": width,
+        "height": height,
+        "render_width": render_width,
+        "render_height": render_height,
+        "pi_model": pi_model,
+        "capped": (render_width, render_height) != (width, height),
+    })
 
 
 @app.route("/settings", methods=["POST"])
@@ -1494,6 +1569,14 @@ def settings():
     height = request.form.get("display_height", type=int)
     if height is not None and 100 <= height <= 8000:
         config["display_height"] = height
+
+    hdmi_width = request.form.get("hdmi_width", type=int)
+    if hdmi_width is not None and 100 <= hdmi_width <= 8000:
+        config["hdmi_width"] = hdmi_width
+
+    hdmi_height = request.form.get("hdmi_height", type=int)
+    if hdmi_height is not None and 100 <= hdmi_height <= 8000:
+        config["hdmi_height"] = hdmi_height
 
     # --- Classic appearance ---
     c_text_color = request.form.get("classic_text_color", "").strip()

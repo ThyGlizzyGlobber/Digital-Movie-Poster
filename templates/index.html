@@ -208,6 +208,14 @@
           <p class="panel-label">Grain intensity</p>
           <form action="/regrain" method="post">
             <div class="field-group">
+              <label style="display:inline-flex;align-items:center;gap:8px;">
+                <input type="checkbox" name="grain_enabled" {{ 'checked' if grain_enabled else '' }}>
+                Film grain enabled
+              </label>
+              <p class="note" style="margin:6px 0 0;">Turning this off skips grain processing entirely
+                (not just a zero-strength pass) - noticeably faster on weaker hardware like a Pi Zero W.</p>
+            </div>
+            <div class="field-group">
               <div class="field-label"><span>Intensity</span><span class="val" id="grainVal">{{ grain_intensity }}</span></div>
               <input type="range" name="grain_intensity" min="0" max="0.3" step="0.01" value="{{ grain_intensity }}"
                      oninput="document.getElementById('grainVal').textContent=this.value">
@@ -293,16 +301,29 @@
           </div>
 
           <div class="field-group">
-            <label class="field-label">Display resolution (px)</label>
+            <label class="field-label">HDMI output resolution (px)</label>
+            <div class="color-row">
+              <input type="number" id="hdmi_width" name="hdmi_width" min="100" max="8000" value="{{ hdmi_width }}" placeholder="Width" form="settingsForm">
+              <input type="number" id="hdmi_height" name="hdmi_height" min="100" max="8000" value="{{ hdmi_height }}" placeholder="Height" form="settingsForm">
+            </div>
+            <p class="note" style="margin:6px 0 0;">The physical signal sent to the screen - normally its true
+              native resolution, so it looks sharp regardless of what the Pi renders at. Forcing the new mode
+              needs <code>sudo install.sh -y</code> run once after Save (see CLAUDE.md).</p>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">Poster render resolution (px)</label>
             <div class="color-row">
               <input type="number" id="display_width" name="display_width" min="100" max="8000" value="{{ display_width }}" placeholder="Width" form="settingsForm">
               <input type="number" id="display_height" name="display_height" min="100" max="8000" value="{{ display_height }}" placeholder="Height" form="settingsForm">
             </div>
             <button type="button" class="primary" id="detectDisplayBtn" style="margin-top:10px;">Detect display</button>
             <div id="detectDisplayResult"></div>
-            <p class="note" style="margin:6px 0 0;">Reads the connected display's own reported resolution and
-              fills in the fields above - still needs Save below to apply, and forcing the new HDMI mode
-              needs <code>sudo install.sh -y</code> run once after that (see CLAUDE.md).</p>
+            <p class="note" style="margin:6px 0 0;">The canvas posters are actually composited/grained at, then
+              scaled by <code>fbi</code> to fill the HDMI output above - lower than the HDMI resolution is fine,
+              and keeps processing fast on weaker hardware. Detect display fills in both fields above from the
+              connected screen, capped to a safe render size if this Pi looks too weak to composite full-size -
+              still needs Save below to apply.</p>
           </div>
 
           <div class="field-group">
@@ -1128,6 +1149,8 @@
   const detectDisplayResult = document.getElementById('detectDisplayResult');
   const displayWidthInput = document.getElementById('display_width');
   const displayHeightInput = document.getElementById('display_height');
+  const hdmiWidthInput = document.getElementById('hdmi_width');
+  const hdmiHeightInput = document.getElementById('hdmi_height');
 
   if(detectDisplayBtn){
     detectDisplayBtn.addEventListener('click', ()=>{
@@ -1144,11 +1167,26 @@
           return;
         }
 
-        displayWidthInput.value = data.width;
-        displayHeightInput.value = data.height;
+        // HDMI output always targets the display's true native resolution;
+        // the render canvas gets the (possibly capped) suggestion instead,
+        // so a weak Pi isn't asked to composite full-size just because the
+        // screen can show it - fbi upscales the gap at display time.
+        hdmiWidthInput.value = data.width;
+        hdmiHeightInput.value = data.height;
+        displayWidthInput.value = data.render_width;
+        displayHeightInput.value = data.render_height;
         markDirty();
-        detectDisplayResult.innerHTML = '<p class="flash ok">Detected '+data.width+'&times;'+data.height
-          +' - fields updated below, Save to apply.</p>';
+
+        let msg = 'Detected '+data.width+'&times;'+data.height;
+        if(data.capped){
+          msg += ' on '+escapeHtml(data.pi_model || 'this Pi')
+            +' - render resolution set to '+data.render_width+'&times;'+data.render_height
+            +' (upscaled to fill the screen) to keep processing fast.';
+        } else {
+          msg += ' - fields updated below.';
+        }
+        detectDisplayResult.innerHTML = '<p class="flash ok">'+msg+' Save to apply, then run '
+          +'<code>sudo install.sh -y</code> once to force the new HDMI mode.</p>';
       }).catch(()=>{
         detectDisplayBtn.disabled = false;
         detectDisplayBtn.textContent = 'Detect display';
