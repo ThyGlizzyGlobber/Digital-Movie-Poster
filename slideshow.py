@@ -44,7 +44,22 @@ def load_config():
     try:
         with open(CONFIG_PATH) as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return {
+            "order": [], "interval_seconds": DEFAULT_INTERVAL, "rotation_degrees": 0,
+            "brightness": 1.0, "contrast": 1.0, "saturation": 1.0,
+            "poster_meta": {}, "display_width": 1080, "display_height": 1920,
+            "text_color": "#5b8cff", "accent_color": "#5b8cff", "poster_position": "center",
+            "top_band_content": "status", "bottom_band_content": "date",
+            "top_custom_text": "", "bottom_custom_text": "", "text_size_pct": 100,
+            "display_font": {}, "band_background_color": "#0a0a0b",
+        }
+    except json.JSONDecodeError as e:
+        # Falling back silently here once meant a corrupt config.json looked
+        # identical to "no posters configured yet" - nothing in the log to
+        # tell them apart. Log it, so a future config.json problem is
+        # diagnosable instead of just an inexplicably stuck spinner.
+        log(f"config.json is invalid JSON, falling back to defaults: {e}")
         return {
             "order": [], "interval_seconds": DEFAULT_INTERVAL, "rotation_degrees": 0,
             "brightness": 1.0, "contrast": 1.0, "saturation": 1.0,

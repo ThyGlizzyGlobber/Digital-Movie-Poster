@@ -35,6 +35,8 @@
   .content{flex:1;min-width:0}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
+  .subtab-panel{display:none}
+  .subtab-panel.active{display:block}
   section.panel{background:var(--surface);border:1px solid var(--border);
                 border-radius:12px;padding:20px;margin-bottom:20px}
   .panel-label{font-size:.72rem;font-weight:600;letter-spacing:.08em;
@@ -80,10 +82,17 @@
     padding:12px;font-family:'Inter',sans-serif;font-weight:600;font-size:.88rem;
     border-radius:8px;cursor:pointer;margin-top:18px}
   button.primary:hover{background:var(--accent-hover)}
+  button.primary:disabled,button.danger:disabled{opacity:.4;cursor:default;background:none}
+  button.primary:disabled{background:var(--border);color:var(--text-muted)}
   button.danger{width:100%;background:none;color:var(--danger);
     border:1px solid var(--danger-dim);padding:12px;font-family:'Inter',sans-serif;
     font-weight:600;font-size:.88rem;border-radius:8px;cursor:pointer;margin-top:12px}
   button.danger:hover{background:var(--danger-dim);color:var(--text)}
+  .btn-small{background:none;border:1px solid var(--border);color:var(--text);
+    font-family:'Inter',sans-serif;font-size:.78rem;font-weight:600;padding:8px 14px;
+    border-radius:8px;cursor:pointer;white-space:nowrap;flex-shrink:0}
+  .btn-small:hover{background:var(--surface);border-color:var(--accent)}
+  .btn-small:disabled{opacity:.4;cursor:default;background:none;border-color:var(--border)}
   .poster-row{display:flex;align-items:center;gap:12px;background:var(--surface);
     border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px}
   .poster-row.sortable-ghost{opacity:.35}
@@ -140,6 +149,14 @@
   .savebar button:hover{background:var(--accent-hover)}
   .savebar button:disabled{background:var(--border);color:var(--text-muted);cursor:default}
   .savebar.dirty .status{color:var(--accent)}
+  .log-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .log-toolbar select{width:auto;flex-shrink:0}
+  .log-status{font-size:.75rem;color:var(--text-muted);margin-left:auto;white-space:nowrap}
+  .log-view{background:var(--bg);border:1px solid var(--border);border-radius:8px;
+    padding:12px 14px;height:440px;overflow:auto;font-family:'JetBrains Mono',monospace;
+    font-size:.76rem;line-height:1.5;color:var(--text-muted);white-space:pre-wrap;
+    word-break:break-word;margin:0}
+  .log-view .fresh{color:var(--text)}
   @media (max-width:720px){
     .layout{flex-direction:column;gap:16px}
     nav.tabs{width:100%;flex-direction:row;position:static;overflow-x:auto;gap:4px;padding-bottom:4px}
@@ -158,6 +175,7 @@
 <form id="settingsForm" action="/settings" method="post"></form>
 <input type="hidden" name="_schedule_form" value="1" form="settingsForm">
 <input type="hidden" name="_tmdb_form" value="1" form="settingsForm">
+<input type="hidden" name="_justwatch_form" value="1" form="settingsForm">
 
 <div class="shell">
   <header>
@@ -172,8 +190,9 @@
       <button type="button" data-tab="display">Display</button>
       <button type="button" data-tab="boot">Boot screen</button>
       <button type="button" data-tab="schedule">Schedule</button>
-      <button type="button" data-tab="tmdb">TMDb</button>
+      <button type="button" data-tab="discovery">Discovery</button>
       <button type="button" data-tab="plex">Plex</button>
+      <button type="button" data-tab="logs">Logs</button>
       <button type="button" data-tab="system">System</button>
     </nav>
 
@@ -228,7 +247,10 @@
           </p>
         </section>
 
-        <p class="panel-label">Rotation &mdash; drag to reorder</p>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;">
+          <p class="panel-label" style="margin:0;">Rotation &mdash; drag to reorder</p>
+          <button type="button" id="randomizeOrderBtn" class="btn-small">Randomise order</button>
+        </div>
 
         <div class="chips" id="posterFilters">
           <button type="button" data-filter="all" class="active">All ({{ posters|length }})</button>
@@ -590,8 +612,65 @@
         </section>
       </div>
 
-      <!-- TMDB -->
-      <div class="tab-panel" data-panel="tmdb">
+      <!-- DISCOVERY -->
+      <div class="tab-panel" data-panel="discovery">
+        <section class="panel">
+          <p class="panel-label">Active discovery source</p>
+          <p class="note">
+            Only one source pulls posters at a time &mdash; scheduled and
+            manual syncs both check this, so the two can never fight over
+            the rotation. Takes effect after Save.
+          </p>
+          <div style="display:flex;gap:8px;">
+            <label class="checkbox-row" style="flex:1;">
+              <input type="radio" name="discovery_source" value="tmdb" form="settingsForm"
+                     {{ 'checked' if discovery_source != 'justwatch' else '' }} onchange="syncDiscoverySource()">
+              <span>TMDb</span>
+            </label>
+            <label class="checkbox-row" style="flex:1;">
+              <input type="radio" name="discovery_source" value="justwatch" form="settingsForm"
+                     {{ 'checked' if discovery_source == 'justwatch' else '' }} onchange="syncDiscoverySource()">
+              <span>JustWatch</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Automatic cleanup</p>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="poster_expiry_enabled" {{ 'checked' if poster_expiry_enabled else '' }} form="settingsForm">
+              <span>Remove titles once they age out</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label for="poster_expiry_days" class="field-label">Days after release</label>
+            <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days }}" form="settingsForm">
+          </div>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="poster_expiry_include_pinned" {{ 'checked' if poster_expiry_include_pinned else '' }} form="settingsForm">
+              <span>Apply to pinned titles too</span>
+            </label>
+          </div>
+
+          <p class="note" style="margin:12px 0 0;">
+            Applies to whichever source is active. TMDb has no "still in cinemas"
+            flag, so its own <em>now playing</em> list is used as the next best
+            thing either way: a title past the age limit but still showing in
+            cinemas is kept anyway. Your own uploads are never removed by this.
+          </p>
+        </section>
+
+        <div class="chips" id="discoverySubtabs">
+          <button type="button" data-subtab="tmdb" class="active">TMDb</button>
+          <button type="button" data-subtab="justwatch">JustWatch</button>
+        </div>
+
+        <div class="subtab-panel active" data-subpanel="tmdb">
         <section class="panel">
           <p class="panel-label">Add by link</p>
           <p class="note">
@@ -757,44 +836,63 @@
         </section>
 
         <section class="panel">
-          <p class="panel-label">Automatic cleanup</p>
-
-          <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="poster_expiry_enabled" {{ 'checked' if poster_expiry_enabled else '' }} form="settingsForm">
-              <span>Remove titles once they age out</span>
-            </label>
-          </div>
-
-          <div class="field-group">
-            <label for="poster_expiry_days" class="field-label">Days after release</label>
-            <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days }}" form="settingsForm">
-          </div>
-
-          <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="poster_expiry_include_pinned" {{ 'checked' if poster_expiry_include_pinned else '' }} form="settingsForm">
-              <span>Apply to pinned titles too</span>
-            </label>
-          </div>
-
-          <p class="note" style="margin:12px 0 0;">
-            TMDb has no "still in cinemas" flag, so its own <em>now playing</em> list is
-            used as the next best thing: a film past the age limit but still showing
-            in cinemas is kept anyway. Your own uploads are never removed by this.
-          </p>
-        </section>
-
-        <section class="panel">
           <p class="panel-label">Actions</p>
+          <p class="note" id="tmdbActiveNote" style="margin-bottom:14px;"></p>
           <form action="/tmdb-sync-now" method="post">
-            <button type="submit" class="primary" style="margin-top:0;">Sync now</button>
+            <button type="submit" class="primary" id="tmdbSyncBtn" style="margin-top:0;">Sync now</button>
           </form>
           <form action="/purge-tmdb" method="post"
                 onsubmit="return confirm('Remove every TMDb poster, including pinned ones? Your own uploads are kept.')">
             <button type="submit" class="danger">Purge all TMDb posters</button>
           </form>
         </section>
+        </div>
+
+        <div class="subtab-panel" data-subpanel="justwatch">
+        <section class="panel">
+          <p class="panel-label">JustWatch automation</p>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="justwatch_enabled" {{ 'checked' if justwatch_enabled else '' }} form="settingsForm">
+              <span>Pull posters from JustWatch</span>
+            </label>
+          </div>
+
+          <div class="field-group">
+            <label class="checkbox-row">
+              <input type="checkbox" name="justwatch_schedule_enabled" {{ 'checked' if justwatch_schedule_enabled else '' }} form="settingsForm">
+              <span>Run automatically on a daily schedule</span>
+            </label>
+          </div>
+
+          <div class="field-group" style="margin-top:24px;">
+            <label for="justwatch_max_titles" class="field-label">How many posters to sync</label>
+            <input type="number" id="justwatch_max_titles" name="justwatch_max_titles" min="1" max="40" step="1" value="{{ justwatch_max_titles }}" form="settingsForm">
+          </div>
+
+          <p class="note" style="margin:12px 0 0;">
+            Pulls from justwatch.com's Popular movies list, filtered to titles
+            released this year &mdash; recalculated on every sync, so it moves
+            on to next year's releases on its own once the year turns over,
+            no manual update needed. JustWatch supplies the ranking only:
+            poster art and credits still come from TMDb, matched by title and
+            release year.
+          </p>
+        </section>
+
+        <section class="panel">
+          <p class="panel-label">Actions</p>
+          <p class="note" id="justwatchActiveNote" style="margin-bottom:14px;"></p>
+          <form action="/justwatch-sync-now" method="post">
+            <button type="submit" class="primary" id="justwatchSyncBtn" style="margin-top:0;">Sync now</button>
+          </form>
+          <form action="/purge-justwatch" method="post"
+                onsubmit="return confirm('Remove every JustWatch poster? Your own uploads and TMDb posters are kept.')">
+            <button type="submit" class="danger">Purge all JustWatch posters</button>
+          </form>
+        </section>
+        </div>
       </div>
 
       <!-- PLEX -->
@@ -873,6 +971,30 @@
       </div>
 
       <!-- SYSTEM -->
+      <div class="tab-panel" data-panel="logs">
+        <section class="panel">
+          <p class="panel-label">Live logs</p>
+          <p class="note">
+            What's actually happening in the background right now - the display
+            loop, the Plex "now playing" poller, TMDb sync runs, and the last
+            software update. Only updates while this tab is open.
+          </p>
+          <div class="log-toolbar">
+            <select id="logSourceSelect">
+              {% for key, label in log_sources.items() %}
+              <option value="{{ key }}">{{ label }}</option>
+              {% endfor %}
+            </select>
+            <label class="checkbox-row" style="margin:0;">
+              <input type="checkbox" id="logAutoScroll" checked>
+              Auto-scroll
+            </label>
+            <span class="log-status" id="logStatus"></span>
+          </div>
+          <pre class="log-view" id="logView">Loading&hellip;</pre>
+        </section>
+      </div>
+
       <div class="tab-panel" data-panel="system">
         <section class="panel">
           <p class="panel-label">Interface appearance</p>
@@ -973,6 +1095,127 @@
     if(saved) activateTab(saved);
   }catch(e){}
 
+  // --- Live logs ----------------------------------------------------------
+  // Polls only while the Logs tab is actually visible - both while another
+  // tab is selected and while the browser tab/window itself is hidden - so
+  // this doesn't add background load to a Pi Zero W that's just sitting on
+  // a shelf running the display loop.
+  const logView = document.getElementById('logView');
+  const logSourceSelect = document.getElementById('logSourceSelect');
+  const logAutoScroll = document.getElementById('logAutoScroll');
+  const logStatus = document.getElementById('logStatus');
+  const LOG_POLL_MS = 2000;
+  let logPollTimer = null;
+  let logPollInFlight = false;
+
+  function logIsNearBottom(){
+    return logView.scrollHeight - logView.scrollTop - logView.clientHeight < 40;
+  }
+
+  function pollLog(){
+    if(logPollInFlight) return;
+    logPollInFlight = true;
+    fetch('/logs/' + encodeURIComponent(logSourceSelect.value)).then(r=>r.json()).then(data=>{
+      logPollInFlight = false;
+      if(!data.ok){
+        logView.textContent = 'Could not load this log.';
+        return;
+      }
+      const stick = logAutoScroll.checked && logIsNearBottom();
+      logView.textContent = data.content || '(empty so far)';
+      logStatus.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      if(stick) logView.scrollTop = logView.scrollHeight;
+    }).catch(()=>{
+      logPollInFlight = false;
+      logStatus.textContent = 'Connection lost, retrying…';
+    });
+  }
+
+  function startLogPolling(){
+    if(logPollTimer) return;
+    pollLog();
+    logPollTimer = setInterval(pollLog, LOG_POLL_MS);
+  }
+
+  function stopLogPolling(){
+    if(logPollTimer){ clearInterval(logPollTimer); logPollTimer = null; }
+  }
+
+  function logsTabActive(){
+    const panel = document.querySelector('.tab-panel[data-panel="logs"]');
+    return !!panel && panel.classList.contains('active');
+  }
+
+  logSourceSelect.addEventListener('change', ()=>{
+    logView.textContent = 'Loading…';
+    pollLog();
+  });
+
+  tabNav.addEventListener('click', e=>{
+    const b = e.target.closest('button[data-tab]');
+    if(!b) return;
+    if(b.dataset.tab === 'logs') startLogPolling();
+    else stopLogPolling();
+  });
+
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.hidden) stopLogPolling();
+    else if(logsTabActive()) startLogPolling();
+  });
+
+  if(logsTabActive()) startLogPolling();
+
+  // --- Discovery subtabs --------------------------------------------------
+  // Switching subtabs is purely a view choice (which source's settings
+  // you're looking at) and deliberately separate from discovery_source
+  // (which source actually syncs) - viewing JustWatch's settings shouldn't
+  // itself switch the frame over to pulling from JustWatch.
+  const discoverySubtabs = document.getElementById('discoverySubtabs');
+  const discoverySubpanels = document.querySelectorAll('.subtab-panel');
+
+  function activateSubtab(name){
+    if(!discoverySubtabs) return;
+    discoverySubtabs.querySelectorAll('button').forEach(b=>
+      b.classList.toggle('active', b.dataset.subtab === name));
+    discoverySubpanels.forEach(p=>p.classList.toggle('active', p.dataset.subpanel === name));
+    try{ sessionStorage.setItem('posterframe_discovery_subtab', name); }catch(e){}
+  }
+
+  if(discoverySubtabs){
+    discoverySubtabs.addEventListener('click', e=>{
+      const b = e.target.closest('button[data-subtab]');
+      if(b) activateSubtab(b.dataset.subtab);
+    });
+    try{
+      const savedSub = sessionStorage.getItem('posterframe_discovery_subtab');
+      if(savedSub) activateSubtab(savedSub);
+    }catch(e){}
+  }
+
+  // Only the selected discovery_source's "Sync now" button stays enabled -
+  // mirrors the server-side check in /tmdb-sync-now and
+  // /justwatch-sync-now, so the UI doesn't even offer the disallowed
+  // action rather than letting a click quietly no-op.
+  function syncDiscoverySource(){
+    const chosen = document.querySelector('input[name="discovery_source"]:checked');
+    const active = chosen ? chosen.value : 'tmdb';
+
+    const tmdbBtn = document.getElementById('tmdbSyncBtn');
+    const jwBtn = document.getElementById('justwatchSyncBtn');
+    const tmdbNote = document.getElementById('tmdbActiveNote');
+    const jwNote = document.getElementById('justwatchActiveNote');
+
+    if(tmdbBtn) tmdbBtn.disabled = active !== 'tmdb';
+    if(jwBtn) jwBtn.disabled = active !== 'justwatch';
+    if(tmdbNote) tmdbNote.textContent = active === 'tmdb'
+      ? 'TMDb is the active discovery source.'
+      : 'JustWatch is the active source above, so syncing here is disabled.';
+    if(jwNote) jwNote.textContent = active === 'justwatch'
+      ? 'JustWatch is the active discovery source.'
+      : 'TMDb is the active source above, so syncing here is disabled.';
+  }
+  syncDiscoverySource();
+
   // --- TMDb media mode --------------------------------------------------
   // The hidden set is NOT disabled, so its checkbox states still submit
   // and stay saved - switching back preserves each side's settings.
@@ -1040,6 +1283,7 @@
 
   const filterBar = document.getElementById('posterFilters');
   const filterHint = document.getElementById('filterHint');
+  const randomizeOrderBtn = document.getElementById('randomizeOrderBtn');
 
   function applyFilter(name){
     activeFilter = name;
@@ -1058,6 +1302,7 @@
     const filtered = name !== 'all';
     if(filterHint) filterHint.style.display = filtered ? 'block' : 'none';
     if(sortable) sortable.option('disabled', filtered);
+    if(randomizeOrderBtn) randomizeOrderBtn.disabled = filtered;
   }
 
   if(filterBar){
@@ -1079,6 +1324,25 @@
             posterList.querySelectorAll('.position').forEach((el,i)=>{ el.textContent = i+1; });
         });
       }
+    });
+  }
+
+  if(randomizeOrderBtn){
+    randomizeOrderBtn.addEventListener('click', ()=>{
+      if(activeFilter !== 'all') return;
+      const rows = Array.from(posterList.querySelectorAll('.poster-row'));
+      // Fisher-Yates - move DOM nodes into the shuffled order first so it's
+      // visible immediately, then persist through the same /reorder route
+      // drag-and-drop already uses.
+      for(let i = rows.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [rows[i], rows[j]] = [rows[j], rows[i]];
+      }
+      rows.forEach(row => posterList.appendChild(row));
+      posterList.querySelectorAll('.position').forEach((el,i)=>{ el.textContent = i+1; });
+      const order = rows.map(el=>el.dataset.filename);
+      fetch('/reorder',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({order})});
     });
   }
 

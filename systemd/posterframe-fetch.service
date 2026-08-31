@@ -1,5 +1,5 @@
 [Unit]
-Description=Fetch movie posters from TMDb
+Description=Fetch movie posters from the active discovery source (TMDb or JustWatch)
 After=network-online.target posterframe-web.service
 Wants=network-online.target
 
@@ -9,4 +9,4 @@ User=__USER__
 WorkingDirectory=__DIR__
 EnvironmentFile=__DIR__/.env
 Environment=POSTERFRAME_TRIGGER=schedule
-ExecStart=__DIR__/venv/bin/python3 __DIR__/fetch_posters.py
+ExecStart=__DIR__/venv/bin/python3 __DIR__/fetch_discovery.py

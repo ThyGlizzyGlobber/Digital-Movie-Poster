@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the TMDb poster fetch daily
+Description=Run the daily poster discovery sync (TMDb or JustWatch, whichever is active)
 
 [Timer]
 OnCalendar=*-*-* 04:00:00

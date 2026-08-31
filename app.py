@@ -4,6 +4,8 @@ import json
 import colorsys
 import glob
 import subprocess
+import tempfile
+import threading
 import uuid
 from datetime import date, datetime
 from urllib.parse import urlencode
@@ -22,8 +24,22 @@ FONT_CACHE_DIR = os.path.join(BASE_DIR, "fonts_cache")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 TMDB_SYNC_LOG = os.path.join(BASE_DIR, "tmdb_sync.log")
+JUSTWATCH_SYNC_LOG = os.path.join(BASE_DIR, "justwatch_sync.log")
 UPDATE_SCRIPT = os.path.join(BASE_DIR, "update.sh")
 UPDATE_LOG = os.path.join(BASE_DIR, "update.log")
+SLIDESHOW_LOG = os.path.join(BASE_DIR, "slideshow.log")
+PLEX_MONITOR_LOG = os.path.join(BASE_DIR, "plex_monitor.log")
+
+# Whitelisted by name, not by path from the request - the Logs tab passes
+# one of these keys, never a filename, so there's no path-traversal surface.
+LOG_SOURCES = {
+    "slideshow": ("Slideshow", SLIDESHOW_LOG),
+    "plex": ("Plex monitor", PLEX_MONITOR_LOG),
+    "tmdb": ("TMDb sync", TMDB_SYNC_LOG),
+    "justwatch": ("JustWatch sync", JUSTWATCH_SYNC_LOG),
+    "update": ("Update", UPDATE_LOG),
+}
+LOG_TAIL_BYTES = 20000
 BOOT_IMAGE_PATH = os.path.join(BASE_DIR, "static", "boot_image.png")
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 PLEX_NOWPLAYING_FILENAME = "plex_nowplaying.jpg"
@@ -373,6 +389,10 @@ def load_config():
         "tmdb_min_popularity": 0,
         "tmdb_min_popularity_upcoming": 10,
         "tmdb_upcoming_months": 12,
+        "discovery_source": "tmdb",
+        "justwatch_enabled": False,
+        "justwatch_schedule_enabled": True,
+        "justwatch_max_titles": 10,
         "plex_client_id": "",
         "plex_enabled": False,
         "plex_poll_seconds": 15.0,
@@ -442,9 +462,28 @@ def load_config():
     return config
 
 
+_CONFIG_LOCK = threading.Lock()
+
+
 def save_config(config):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    # Write-then-rename, not write-in-place: an in-place write (open(path,
+    # "w")) truncates before writing, so any overlap between two writers -
+    # e.g. a browser save landing while the Plex connect flow's status poll
+    # is also saving plex_home_users - interleaves their bytes into a torn,
+    # unparseable file. os.replace() is atomic (POSIX rename), and each
+    # writer gets its own temp file, so the worst case with this is a clean
+    # last-writer-wins instead of corruption. The lock only prevents a
+    # lost-update race between threads in this same process (plex_monitor.py
+    # and fetch_posters.py write via HTTP, not this function directly).
+    with _CONFIG_LOCK:
+        fd, tmp_path = tempfile.mkstemp(prefix=".config.json.", dir=BASE_DIR)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(config, f, indent=2)
+            os.replace(tmp_path, CONFIG_PATH)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
 
 
 def get_ordered_posters():
@@ -592,6 +631,10 @@ def index():
     grain_enabled = config.get("grain_enabled", True)
     tmdb_enabled = config.get("tmdb_enabled", True)
     tmdb_schedule_enabled = config.get("tmdb_schedule_enabled", True)
+    discovery_source = config.get("discovery_source", "tmdb")
+    justwatch_enabled = config.get("justwatch_enabled", False)
+    justwatch_schedule_enabled = config.get("justwatch_schedule_enabled", True)
+    justwatch_max_titles = config.get("justwatch_max_titles", 10)
     boot_image_seconds = config.get("boot_image_seconds", 3.0)
     boot_image_height_pct = config.get("boot_image_height_pct", 25)
     boot_image_rotation = config.get("boot_image_rotation", 0)
@@ -622,10 +665,12 @@ def index():
     classic_plex_band = classic.get("plex_band", "bottom")
     plex_connected = bool(plex_username and load_env_file(ENV_PATH).get("PLEX_SERVER_TOKEN"))
     git_sha, git_message, git_version = get_git_info()
+    log_sources = {key: label for key, (label, _) in LOG_SOURCES.items()}
 
     return render_template(
         "index.html",
         posters=posters,
+        log_sources=log_sources,
         interval_minutes=interval_minutes,
         rotation_degrees=rotation_degrees,
         accent_color=accent_color,
@@ -663,6 +708,10 @@ def index():
         grain_enabled=grain_enabled,
         tmdb_enabled=tmdb_enabled,
         tmdb_schedule_enabled=tmdb_schedule_enabled,
+        discovery_source=discovery_source,
+        justwatch_enabled=justwatch_enabled,
+        justwatch_schedule_enabled=justwatch_schedule_enabled,
+        justwatch_max_titles=justwatch_max_titles,
         boot_image_seconds=boot_image_seconds,
         boot_image_height_pct=boot_image_height_pct,
         boot_image_rotation=boot_image_rotation,
@@ -867,6 +916,40 @@ def tmdb_sync_now():
     return redirect(url_for("index"))
 
 
+@app.route("/justwatch-sync-now", methods=["POST"])
+def justwatch_sync_now():
+    config = load_config()
+    if not config.get("justwatch_enabled", False):
+        return redirect(url_for("index"))
+    # Only the currently-selected source can pull, so a stale JustWatch tab
+    # left open after switching back to TMDb can't kick off a sync that
+    # would just fight the TMDb one over the rotation.
+    if config.get("discovery_source", "tmdb") != "justwatch":
+        return redirect(url_for("index"))
+
+    api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
+    if not api_key:
+        return redirect(url_for("index"))
+
+    fetch_script = os.path.join(BASE_DIR, "fetch_justwatch.py")
+    venv_python = os.path.join(BASE_DIR, "venv", "bin", "python3")
+
+    subprocess_env = os.environ.copy()
+    subprocess_env["TMDB_API_KEY"] = api_key
+
+    with open(JUSTWATCH_SYNC_LOG, "w") as log_file:
+        subprocess.Popen(
+            [venv_python, fetch_script],
+            env=subprocess_env,
+            cwd=BASE_DIR,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    return redirect(url_for("index"))
+
+
 TMDB_URL_RE = re.compile(r"themoviedb\.org/(movie|tv)/(\d+)")
 
 
@@ -973,6 +1056,41 @@ def purge_tmdb():
         os.remove(tracking)
 
     print(f"Purged {removed} TMDb poster(s)")
+    return redirect(url_for("index"))
+
+
+@app.route("/purge-justwatch", methods=["POST"])
+def purge_justwatch():
+    """Remove every JustWatch-sourced poster. Available regardless of which
+    source is currently active, so switching away from JustWatch still
+    leaves a way to clear out what it already added."""
+    config = load_config()
+    removed = 0
+
+    for directory in (POSTER_DIR, ORIGINAL_DIR):
+        if not os.path.isdir(directory):
+            continue
+        for name in os.listdir(directory):
+            if name.startswith("justwatch_"):
+                try:
+                    os.remove(os.path.join(directory, name))
+                    if directory == POSTER_DIR:
+                        removed += 1
+                except OSError:
+                    pass
+
+    config["order"] = [f for f in config.get("order", []) if not f.startswith("justwatch_")]
+    config["poster_meta"] = {
+        k: v for k, v in config.get("poster_meta", {}).items()
+        if not k.startswith("justwatch_")
+    }
+    save_config(config)
+
+    tracking = os.path.join(BASE_DIR, "justwatch_tracked.json")
+    if os.path.exists(tracking):
+        os.remove(tracking)
+
+    print(f"Purged {removed} JustWatch poster(s)")
     return redirect(url_for("index"))
 
 
@@ -1173,6 +1291,27 @@ def update_log():
             content = f.read()[-4000:]
 
     return jsonify({"running": running, "content": content})
+
+
+@app.route("/logs/<name>")
+def tail_log(name):
+    """Polled by the Logs tab. Seeks to the last LOG_TAIL_BYTES instead of
+    reading the whole file - plex_monitor.log in particular grows large over
+    time, and this gets polled every couple seconds on a Pi Zero W."""
+    source = LOG_SOURCES.get(name)
+    if source is None:
+        return jsonify({"ok": False, "error": "Unknown log"}), 404
+    _, path = source
+
+    content = ""
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - LOG_TAIL_BYTES))
+            content = f.read().decode("utf-8", errors="replace")
+
+    return jsonify({"ok": True, "content": content})
 
 
 # Holds the pin id from the most recent /plex/connect call, so
@@ -1809,6 +1948,18 @@ def settings():
         months = request.form.get("tmdb_upcoming_months", type=float)
         if months is not None:
             config["tmdb_upcoming_months"] = max(1, min(36, months))
+
+    if request.form.get("_justwatch_form") == "1":
+        source = request.form.get("discovery_source")
+        if source in ("tmdb", "justwatch"):
+            config["discovery_source"] = source
+
+        config["justwatch_enabled"] = "justwatch_enabled" in request.form
+        config["justwatch_schedule_enabled"] = "justwatch_schedule_enabled" in request.form
+
+        max_titles = request.form.get("justwatch_max_titles", type=int)
+        if max_titles is not None:
+            config["justwatch_max_titles"] = max(1, min(40, max_titles))
 
     if request.form.get("_plex_form") == "1":
         config["plex_enabled"] = "plex_enabled" in request.form
