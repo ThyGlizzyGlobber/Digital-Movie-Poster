@@ -836,6 +836,20 @@
             </label>
           </div>
 
+          {% if plex_home_users|length > 1 %}
+          <div class="field-group">
+            <label for="plexUserSelect" class="field-label">Track this Plex Home profile</label>
+            <select id="plexUserSelect">
+              {% for user in plex_home_users %}
+              <option value="{{ user.title }}" {{ 'selected' if user.title == plex_username else '' }}>{{ user.title }}</option>
+              {% endfor %}
+            </select>
+            <div id="plexUserSelectResult"></div>
+            <p class="note" style="margin:6px 0 0;">Multiple profiles found on this Plex Home - only this one's
+              playback drives Now Playing, so other people using the same server don't cause conflicts.</p>
+          </div>
+          {% endif %}
+
           <div class="field-group">
             <label for="plex_poll_seconds" class="field-label">Check interval (seconds)</label>
             <input type="number" id="plex_poll_seconds" name="plex_poll_seconds" min="5" max="120" step="1"
@@ -1416,6 +1430,34 @@
         if(authTab) authTab.close();
         plexConnectResult.innerHTML = '<p class="flash err">Couldn’t start the Plex connection - is the network up?</p>';
         resetPlexConnectBtn();
+      });
+    });
+  }
+
+  // --- Plex Home profile selection ----------------------------------------
+  const plexUserSelect = document.getElementById('plexUserSelect');
+  const plexUserSelectResult = document.getElementById('plexUserSelectResult');
+
+  if(plexUserSelect){
+    plexUserSelect.addEventListener('change', ()=>{
+      const title = plexUserSelect.value;
+      plexUserSelect.disabled = true;
+      plexUserSelectResult.innerHTML = '<p class="note">Switching…</p>';
+
+      fetch('/plex/select-user', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title}),
+      }).then(r=>r.json()).then(data=>{
+        plexUserSelect.disabled = false;
+        if(!data.ok){
+          plexUserSelectResult.innerHTML = '<p class="flash err">'+escapeHtml(data.error)+'</p>';
+          return;
+        }
+        plexUserSelectResult.innerHTML = '<p class="flash ok">Now tracking '+escapeHtml(data.username)+'.</p>';
+      }).catch(()=>{
+        plexUserSelect.disabled = false;
+        plexUserSelectResult.innerHTML = '<p class="flash err">Couldn’t reach the server.</p>';
       });
     });
   }

@@ -379,6 +379,7 @@ def load_config():
         "plex_username": "",
         "plex_server_name": "",
         "plex_server_url": "",
+        "plex_home_users": [],
         "plex_now_playing": {"active": False},
     }
 
@@ -617,6 +618,7 @@ def index():
     plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
     plex_username = config.get("plex_username", "")
     plex_server_name = config.get("plex_server_name", "")
+    plex_home_users = config.get("plex_home_users", [])
     classic_plex_band = classic.get("plex_band", "bottom")
     plex_connected = bool(plex_username and load_env_file(ENV_PATH).get("PLEX_SERVER_TOKEN"))
     git_sha, git_message, git_version = get_git_info()
@@ -690,6 +692,7 @@ def index():
         plex_poll_seconds=plex_poll_seconds,
         plex_username=plex_username,
         plex_server_name=plex_server_name,
+        plex_home_users=plex_home_users,
         classic_plex_band=classic_plex_band,
         plex_connected=plex_connected,
     )
@@ -1179,6 +1182,49 @@ def update_log():
 _plex_pending_pin = None
 
 
+def fetch_plex_home_users(client_id, token):
+    """Best-effort - lets the user pick which Plex Home profile's playback
+    to track instead of always assuming it's whoever ran the PIN sign-in,
+    which matters when multiple people share one Plex Home and only one of
+    them should drive Now Playing. Never raises: the connect flow succeeds
+    either way, this just doesn't offer a picker if it comes back empty.
+    Unverified against a real multi-profile Plex Home account - the
+    /status/sessions User.title matching this project already relies on for
+    the single-account case is proven live; this listing endpoint and its
+    response shape aren't, so this parses somewhat defensively and simply
+    returns nothing usable rather than guessing wrong."""
+    try:
+        resp = requests.get(
+            f"{PLEX_TV}/api/v2/home/users",
+            headers=plex_headers(client_id, token),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return []
+
+    if isinstance(data, dict):
+        for key in ("users", "Users", "entries", "Entries"):
+            if isinstance(data.get(key), list):
+                data = data[key]
+                break
+        else:
+            return []
+    if not isinstance(data, list):
+        return []
+
+    users = []
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        title = entry.get("title") or entry.get("username") or entry.get("friendlyName")
+        if not title:
+            continue
+        users.append({"id": entry.get("id"), "title": title})
+    return users
+
+
 @app.route("/plex/connect", methods=["POST"])
 def plex_connect():
     """Starts the Plex PIN sign-in flow. The frontend opens the returned
@@ -1251,6 +1297,13 @@ def plex_connect_status():
         user_data = user_resp.json()
         username = user_data.get("username") or user_data.get("title") or user_data.get("email") or "Plex user"
 
+        # Best-effort - the token this needs only exists in-memory for this
+        # request (see the module-level note on why only PLEX_SERVER_TOKEN
+        # ever gets persisted), so this is the only point this can ever be
+        # fetched from - a later "switch profile" action just picks from
+        # whatever got stored here, it can't re-fetch a fresh list itself.
+        home_users = fetch_plex_home_users(client_id, token)
+
         resources_resp = requests.get(
             f"{PLEX_TV}/api/v2/resources",
             headers=plex_headers(client_id, token),
@@ -1310,6 +1363,8 @@ def plex_connect_status():
     config["plex_username"] = username
     config["plex_server_name"] = server["name"]
     config["plex_server_url"] = server["url"]
+    if home_users:
+        config["plex_home_users"] = home_users
     save_config(config)
 
     env = load_env_file(ENV_PATH)
@@ -1317,9 +1372,32 @@ def plex_connect_status():
     save_env_file(ENV_PATH, env)
 
     result = {"ok": True, "status": "linked", "username": username, "server_name": server["name"]}
+    if home_users:
+        result["home_users"] = home_users
     if warning:
         result["warning"] = warning
     return jsonify(result)
+
+
+@app.route("/plex/select-user", methods=["POST"])
+def plex_select_user():
+    """Switches which Plex Home profile's sessions Now Playing tracks -
+    just changes plex_username, the same field the connect flow already
+    populates and plex_monitor.py already matches session User.title
+    against, so no other code needs to know this exists. Doesn't touch
+    Plex at all: the choice is only ever among names already stored in
+    plex_home_users from the last connect, since that's the only point an
+    account token (needed to ask Plex who's in the Home) is ever available -
+    see fetch_plex_home_users."""
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"ok": False, "error": "No profile given"}), 400
+
+    config = load_config()
+    config["plex_username"] = title
+    save_config(config)
+    return jsonify({"ok": True, "username": title})
 
 
 @app.route("/plex/disconnect", methods=["POST"])
@@ -1328,6 +1406,7 @@ def plex_disconnect():
     config["plex_username"] = ""
     config["plex_server_name"] = ""
     config["plex_server_url"] = ""
+    config["plex_home_users"] = []
     config["plex_enabled"] = False
     config["plex_now_playing"] = {"active": False}
     config["order"] = [f for f in config.get("order", []) if f != PLEX_NOWPLAYING_FILENAME]
