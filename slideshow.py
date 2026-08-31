@@ -438,6 +438,14 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
 
 
 def start_fbi(paths, interval_seconds):
+    # fbi inherits stdout/stderr from this process by default, which per the
+    # unit file's StandardOutput=tty/TTYPath=/dev/tty1 means anything it
+    # prints (e.g. its font-loading line on every single start, unrelated to
+    # -noverbose - that only suppresses the on-image status line) lands as
+    # raw text on the physical screen. Discarded rather than logged: this is
+    # frequent, low-value startup chatter (every rebuild starts a new fbi),
+    # and CLAUDE.md's own subprocess convention is stdout=DEVNULL for
+    # exactly this reason.
     return subprocess.Popen([
         "fbi",
         "-a",
@@ -445,7 +453,7 @@ def start_fbi(paths, interval_seconds):
         "-t", str(max(1, int(round(interval_seconds)))),
         "-noverbose",
         *paths,
-    ])
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def parse_hhmm(value, fallback):

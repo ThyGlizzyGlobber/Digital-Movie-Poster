@@ -5,6 +5,16 @@ After=multi-user.target
 [Service]
 User=root
 WorkingDirectory=__DIR__
+# Masks every (re)start, not just the very first boot - posterframe-spinner's
+# Before= ordering only applies when both units start together as part of
+# the same transaction (i.e. actual boot), so a later manual restart never
+# re-triggered it on its own. --no-block is required here, not optional:
+# plain `systemctl start` from an ExecStartPre blocks waiting for its own
+# job while systemd is still mid-way through starting *this* unit, which
+# deadlocks (see the ExecStartPre gotcha in CLAUDE.md). slideshow.py's own
+# stop_spinner() already tears it down once the first real frame is ready,
+# same as it does at boot - nothing new needed on that side.
+ExecStartPre=/usr/bin/systemctl start --no-block posterframe-spinner.service
 ExecStart=__DIR__/venv/bin/python3 __DIR__/slideshow.py
 Restart=always
 RestartSec=5
