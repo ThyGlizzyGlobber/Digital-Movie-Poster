@@ -2,6 +2,7 @@ import os
 import re
 import json
 import colorsys
+import fcntl
 import glob
 import subprocess
 import tempfile
@@ -27,6 +28,7 @@ TMDB_SYNC_LOG = os.path.join(BASE_DIR, "tmdb_sync.log")
 JUSTWATCH_SYNC_LOG = os.path.join(BASE_DIR, "justwatch_sync.log")
 UPDATE_SCRIPT = os.path.join(BASE_DIR, "update.sh")
 UPDATE_LOG = os.path.join(BASE_DIR, "update.log")
+UPDATE_LOCK_FILE = os.path.join(BASE_DIR, ".update.lock")
 SLIDESHOW_LOG = os.path.join(BASE_DIR, "slideshow.log")
 PLEX_MONITOR_LOG = os.path.join(BASE_DIR, "plex_monitor.log")
 
@@ -1208,6 +1210,43 @@ def update_check():
     })
 
 
+def acquire_update_lock():
+    """Opens and non-blockingly flocks .update.lock - the same lock file
+    update.sh itself takes. Returns the open fd (caller must os.close() it
+    to release) if acquired, or None if someone else already holds it -
+    either a genuinely running update.sh, or another /update request that's
+    still mid-spawn. The caller is expected to hold this across its whole
+    check-then-truncate-then-spawn sequence, not just probe and immediately
+    release: two /update requests racing close together used to both see
+    pgrep report nothing running (Popen() returning doesn't guarantee the
+    new process is visible to a separate pgrep call yet), both truncate
+    update.log, and both spawn their own update.sh - each stomping the
+    other's log output, which is exactly what made a genuinely-running
+    update look stuck with nothing but "already in progress" logged.
+    Holding one real lock for the whole critical section closes that race
+    outright, rather than just narrowing it."""
+    try:
+        fd = os.open(UPDATE_LOCK_FILE, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def update_already_running():
+    """Read-only status probe (e.g. for the progress bar's polling) - not
+    holding anything, just asking "is someone currently holding this lock"."""
+    fd = acquire_update_lock()
+    if fd is None:
+        return True
+    os.close(fd)
+    return False
+
+
 @app.route("/update", methods=["POST"])
 def update_now():
     """Pulls latest and restarts services - the actual "Update now" action.
@@ -1219,21 +1258,25 @@ def update_now():
     if not os.path.exists(UPDATE_SCRIPT):
         return redirect(url_for("index"))
 
-    already_running = subprocess.run(
-        ["pgrep", "-f", UPDATE_SCRIPT],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    lock_fd = acquire_update_lock()
+    already_running = lock_fd is None
 
-    if not already_running:
-        with open(UPDATE_LOG, "w") as log_file:
-            subprocess.Popen(
-                # 900s not 600s: a system-file update also runs install.sh
-                # (apt + pip), which needs more room than a code-only pull.
-                ["timeout", "900", "bash", UPDATE_SCRIPT],
-                cwd=BASE_DIR,
-                stdout=log_file, stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
+    if lock_fd is not None:
+        try:
+            with open(UPDATE_LOG, "w") as log_file:
+                subprocess.Popen(
+                    # 900s not 600s: a system-file update also runs install.sh
+                    # (apt + pip), which needs more room than a code-only pull.
+                    ["timeout", "900", "bash", UPDATE_SCRIPT],
+                    cwd=BASE_DIR,
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+        finally:
+            # Released only after the truncate+spawn above has fully
+            # happened - update.sh will take its own fresh lock moments
+            # later once its own script execution reaches that point.
+            os.close(lock_fd)
 
     # Best-effort peek at whether this pull also touches system files, just
     # to set expectations - the UI already warned about this before the
@@ -1280,10 +1323,7 @@ def update_log():
     infers "the service is restarting" from this request itself failing
     (posterframe-web goes down as update.sh's last act), not from anything
     in this response, so this route doesn't need to predict that."""
-    running = subprocess.run(
-        ["pgrep", "-f", UPDATE_SCRIPT],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    running = update_already_running()
 
     content = ""
     if os.path.exists(UPDATE_LOG):
