@@ -724,6 +724,7 @@ def main():
                     current_process.terminate()
                     current_process.wait()
                     current_process = None
+                    blank_framebuffer()
                 applied_signature = None
                 log("No posters to show yet, waiting...")
                 time.sleep(POLL_SECONDS)
@@ -748,11 +749,20 @@ def main():
                 old_process = current_process
                 if old_process:
                     old_process.terminate()
+                    old_process.wait()
+                    # fbi restores whatever was on the framebuffer before it
+                    # started when it exits (see blank_framebuffer's
+                    # docstring - this is the same quirk that made the boot
+                    # spinner reappear during scheduled display-off). Left
+                    # alone, that briefly reveals raw console content between
+                    # the old fbi exiting and the new one painting its first
+                    # frame - most visible around Plex now-playing swaps,
+                    # since that's the moment someone's actually watching the
+                    # screen. A clean black frame here reads as a normal
+                    # transition; console text reads as a glitch.
+                    blank_framebuffer()
 
                 current_process = start_fbi(paths, interval)
-
-                if old_process:
-                    old_process.wait()
 
                 if not spinner_stopped:
                     stop_spinner()
