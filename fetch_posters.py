@@ -10,6 +10,7 @@ movie ID and a TV ID can collide (movie 550 and TV 550 are different).
 """
 import json
 import os
+import random
 import re
 import time
 from datetime import date, datetime, timedelta
@@ -346,6 +347,40 @@ def migrate_old_entries(tracked):
         log(f"Migrated {len(old_keys)} poster(s) to the new naming scheme.")
 
 
+RANDOMIZE_DELAY_SECONDS = 90
+
+
+def maybe_randomize_order(config):
+    """Shared by both discovery sources (fetch_justwatch.py calls this too).
+    Runs at the very end of a sync, only once there's actually nothing left
+    to do - both callers already run as a detached background process
+    (app.py's Popen for "Sync now", or the scheduler timer), so blocking
+    here for the delay doesn't hold up a web request or anything else.
+    The delay itself exists so a sync that just added several new posters
+    doesn't shuffle them in mid-composite - see CLAUDE.md's pipeline
+    section: /upload's response (and so this script's own upload_poster
+    call) already waits for resize+grain to finish, but slideshow.py still
+    needs its own next 3s poll plus however long compositing the new
+    entries takes before they're actually ready to display."""
+    if not config.get("randomize_after_sync", False):
+        return
+
+    log(f"Auto-randomise is on - waiting {RANDOMIZE_DELAY_SECONDS}s before shuffling the order")
+    time.sleep(RANDOMIZE_DELAY_SECONDS)
+
+    order = list(load_web_config().get("order", []))
+    if len(order) < 2:
+        return
+    random.shuffle(order)
+
+    try:
+        resp = requests.post(f"{APP_BASE}/reorder", json={"order": order}, timeout=15)
+        resp.raise_for_status()
+        log("Rotation order randomised.")
+    except requests.RequestException as e:
+        log(f"Could not randomise order: {e}")
+
+
 def main():
     config = load_web_config()
 
@@ -424,6 +459,7 @@ def main():
     if not wanted:
         log("No results returned - leaving the current rotation alone.")
         save_tracked(tracked)
+        maybe_randomize_order(config)
         return
 
     for key, item in wanted.items():
@@ -458,6 +494,7 @@ def main():
     save_tracked(tracked)
     log(f"Done. Tracking {len(tracked)} auto-fetched poster(s) "
           f"across {len(enabled)} categor{'y' if len(enabled) == 1 else 'ies'}.")
+    maybe_randomize_order(config)
 
 
 if __name__ == "__main__":

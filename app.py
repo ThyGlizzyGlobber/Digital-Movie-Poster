@@ -432,6 +432,7 @@ def load_config():
         "justwatch_enabled": False,
         "justwatch_schedule_enabled": True,
         "justwatch_max_titles": 10,
+        "randomize_after_sync": False,
         "plex_client_id": "",
         "plex_enabled": False,
         "plex_poll_seconds": 15.0,
@@ -676,6 +677,7 @@ def index():
     justwatch_enabled = config.get("justwatch_enabled", False)
     justwatch_schedule_enabled = config.get("justwatch_schedule_enabled", True)
     justwatch_max_titles = config.get("justwatch_max_titles", 10)
+    randomize_after_sync = config.get("randomize_after_sync", False)
     boot_image_seconds = config.get("boot_image_seconds", 3.0)
     boot_image_height_pct = config.get("boot_image_height_pct", 25)
     boot_image_rotation = config.get("boot_image_rotation", 0)
@@ -761,6 +763,7 @@ def index():
         justwatch_enabled=justwatch_enabled,
         justwatch_schedule_enabled=justwatch_schedule_enabled,
         justwatch_max_titles=justwatch_max_titles,
+        randomize_after_sync=randomize_after_sync,
         boot_image_seconds=boot_image_seconds,
         boot_image_height_pct=boot_image_height_pct,
         boot_image_rotation=boot_image_rotation,
@@ -1856,6 +1859,8 @@ def settings():
     max_w = request.form.get("poster_max_width", type=int)
     if max_w is not None:
         config["poster_max_width"] = max(400, min(3000, max_w))
+
+    config["randomize_after_sync"] = "randomize_after_sync" in request.form
 
     boot_seconds = request.form.get("boot_image_seconds", type=float)
     if boot_seconds is not None:

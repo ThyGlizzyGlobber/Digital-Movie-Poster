@@ -111,6 +111,17 @@
   .checkbox-row{display:flex;align-items:center;gap:8px;cursor:pointer;
                 font-size:.85rem;color:var(--text-dim)}
   .checkbox-row input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+  .switch-row{display:flex;align-items:center;gap:8px;cursor:pointer;
+              font-size:.85rem;color:var(--text-dim)}
+  .switch{position:relative;display:inline-block;width:34px;height:20px;flex-shrink:0}
+  .switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+  .switch-track{position:absolute;inset:0;background:var(--border);border-radius:20px;transition:background .15s}
+  .switch-track::before{content:"";position:absolute;width:16px;height:16px;left:2px;top:2px;
+                         background:#fff;border-radius:50%;transition:transform .15s;
+                         box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .switch input:checked ~ .switch-track{background:var(--accent)}
+  .switch input:checked ~ .switch-track::before{transform:translateX(14px)}
+  .switch input:focus-visible ~ .switch-track{outline:2px solid var(--accent);outline-offset:2px}
   .font-status{font-size:.75rem;margin-top:6px}
   .font-status.ok{color:var(--text-muted)}
   .font-status.error{color:var(--danger)}
@@ -398,7 +409,14 @@
               <button class="active" id="btnGrid" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Grid</button>
               <button id="btnList" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>List</button>
             </div>
-            <button type="button" id="randomizeOrderBtn" class="btn-small">Randomise order</button>
+            <button type="button" id="randomizeOrderBtn" class="btn-small">Randomise</button>
+            <label class="switch-row" style="font-size:.82rem;" title="Waits 1.5 minutes after a sync finishes (so newly added posters have time to process), then shuffles the rotation order.">
+              <span class="switch">
+                <input type="checkbox" name="randomize_after_sync" {{ 'checked' if randomize_after_sync else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
+              <span>Auto-Randomise After Sync</span>
+            </label>
             <form action="/upload" method="post" enctype="multipart/form-data">
               <label class="file-btn">
                 + Add poster

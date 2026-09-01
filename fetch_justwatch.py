@@ -241,6 +241,14 @@ def main():
 
     expired = expire_old_posters(config)
 
+    # How many candidates to resolve from JustWatch's current top-this-year
+    # ranking per run - not a cap on how many JustWatch posters may exist at
+    # once. It used to be both: anything already tracked that fell outside
+    # this run's top `max_titles` got deleted below regardless of age, so a
+    # title could get pulled after a few days just from ranking noise, with
+    # poster_expiry_days never even consulted. Age (expire_old_posters,
+    # above) is now the only removal criterion - this just bounds how far
+    # down the list a single sync bothers searching for new additions.
     max_titles = max(1, min(40, int(config.get("justwatch_max_titles", 10))))
     this_year = date.today().year
 
@@ -255,6 +263,18 @@ def main():
           f"{len(this_year_titles)} released in {this_year}.")
 
     tracked = load_tracked()
+
+    # expire_old_posters() already deleted the actual file for anything in
+    # `expired` - this just keeps the tracking JSON in sync with that. Done
+    # unconditionally, before the "nothing new resolved" early return below,
+    # so a run that expires a title but finds zero new candidates doesn't
+    # leave a phantom tracked entry pointing at a poster that's already gone
+    # (which would then block a legitimate future re-add of that same title,
+    # since the "already tracked" check further down would wrongly skip it).
+    for key in list(tracked.keys()):
+        if key in expired:
+            del tracked[key]
+
     wanted = {}
 
     for entry in this_year_titles:
@@ -281,6 +301,7 @@ def main():
     if not wanted:
         log("No results resolved - leaving the current rotation alone.")
         save_tracked(tracked)
+        fetch_posters.maybe_randomize_order(config)
         return
 
     for key, item in wanted.items():
@@ -299,19 +320,9 @@ def main():
         except requests.RequestException as e:
             log(f"Failed to update metadata for {item['title']}: {e}")
 
-    for key in list(tracked.keys()):
-        if key in expired:
-            del tracked[key]
-            continue
-        if key not in wanted:
-            try:
-                fetch_posters.remove_poster(f"justwatch_movie_{key}.jpg", tracked[key])
-            except requests.RequestException as e:
-                log(f"Failed to remove {tracked[key]}: {e}")
-            del tracked[key]
-
     save_tracked(tracked)
     log(f"Done. Tracking {len(tracked)} JustWatch-sourced poster(s).")
+    fetch_posters.maybe_randomize_order(config)
 
 
 if __name__ == "__main__":
