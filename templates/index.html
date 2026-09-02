@@ -1267,6 +1267,27 @@
             </label>
           </div>
 
+          <div class="field-group">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="plex_override_schedule" {{ 'checked' if plex_override_schedule else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
+              <span>Let Plex override the schedule</span>
+            </label>
+            <p class="note" style="margin:6px 0 0;">Keeps the display on &mdash; or wakes it &mdash;
+              whenever Plex is playing, even during a scheduled off period.</p>
+          </div>
+
+          <div class="field-group">
+            <label for="plex_schedule_buffer_minutes" class="field-label">Buffer after playback stops (minutes)</label>
+            <input type="number" id="plex_schedule_buffer_minutes" name="plex_schedule_buffer_minutes" min="0" max="120" step="1"
+                   value="{{ plex_schedule_buffer_minutes|numfmt }}" form="settingsForm">
+            <p class="note" style="margin:6px 0 0;">Keeps ignoring the schedule for this long after Plex stops,
+              so browsing between episodes or titles doesn't turn the display off. 0 lets the schedule take
+              back over immediately.</p>
+          </div>
+
           {% if plex_home_users|length > 1 %}
           <div class="field-group">
             <label for="plexUserSelect" class="field-label">Track this Plex Home profile</label>

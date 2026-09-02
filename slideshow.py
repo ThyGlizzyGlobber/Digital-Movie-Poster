@@ -600,6 +600,33 @@ def display_should_be_on(config, now_time):
     return on_t <= now_time < off_t
 
 
+def plex_should_override_schedule(config, plex_last_active_monotonic):
+    """Whether Plex playback should force the display on regardless of the
+    schedule - both keeping an already-on display on, and waking one the
+    schedule had already turned off, since both are driven by the same
+    single check in main()'s poll loop rather than separate on/off code
+    paths.
+
+    plex_last_active_monotonic is a timestamp (time.monotonic(), not
+    wall-clock - immune to NTP/DST jumps) of the most recent poll where
+    Plex was seen actively playing, refreshed every poll while it's still
+    playing and left untouched once it stops - so this reads as "still
+    playing" the instant it's called during playback (the timestamp is
+    always ~0s old), and as "within the buffer" for
+    plex_schedule_buffer_minutes after playback actually stops. None means
+    Plex has never been seen playing this run."""
+    if not config.get("plex_override_schedule", False):
+        return False
+    if plex_last_active_monotonic is None:
+        return False
+    buffer_minutes = config.get("plex_schedule_buffer_minutes", 10)
+    try:
+        buffer_minutes = max(0, float(buffer_minutes))
+    except (TypeError, ValueError):
+        buffer_minutes = 10
+    return (time.monotonic() - plex_last_active_monotonic) < buffer_minutes * 60
+
+
 def blank_framebuffer():
     """Paint the whole framebuffer black.
 
@@ -708,6 +735,7 @@ def main():
     spinner_stopped = False
     display_on = True
     force_rebuild = False
+    plex_last_active_monotonic = None
 
     # One-time reconciliation: the per-poster composite cache starts empty
     # on every fresh process start, so a poster removed from rotation while
@@ -735,7 +763,31 @@ def main():
             now = datetime.now()
             maybe_scheduled_reboot(config, now)
 
-            if not display_should_be_on(config, now.time()):
+            # Plex "now playing" override: plex_monitor.py drives this via
+            # config.json, same as everything else here - this script just
+            # renders whatever it finds. Computed up front (rather than
+            # further down, where this used to live) because the schedule
+            # check right below now needs it too.
+            #
+            # Trust the flag only as far as the file it points at actually
+            # existing. plex_monitor.py's deactivate() clears the flag and
+            # deletes the file via two separate HTTP calls - if the process
+            # (or posterframe-web) gets interrupted between them, "active"
+            # can be stuck true with nothing left to show. Falling back to
+            # normal rotation here means a stale flag never blanks the
+            # display outright; it just quietly stops overriding anything
+            # until plex_monitor.py or a reconnect sorts the flag out.
+            plex_state = config.get("plex_now_playing", {})
+            plex_filename = plex_state.get("filename")
+            plex_active = bool(
+                plex_state.get("active") and plex_filename
+                and os.path.exists(os.path.join(POSTER_DIR, plex_filename))
+            )
+            if plex_active:
+                plex_last_active_monotonic = time.monotonic()
+
+            if not (display_should_be_on(config, now.time())
+                    or plex_should_override_schedule(config, plex_last_active_monotonic)):
                 if display_on:
                     log("Scheduled off period - turning display off")
                     if current_process:
@@ -760,7 +812,10 @@ def main():
                 continue
 
             if not display_on:
-                log("Scheduled on period - waking display, forcing rebuild")
+                if display_should_be_on(config, now.time()):
+                    log("Scheduled on period - waking display, forcing rebuild")
+                else:
+                    log("Plex started playing during a scheduled off period - waking display, forcing rebuild")
                 set_display_power(True)
                 display_on = True
                 # Don't rely solely on the signature diff below to notice
@@ -783,24 +838,10 @@ def main():
             classic = appearances.get("classic", {})
             framed = appearances.get("framed", {})
 
-            # Plex "now playing" override: plex_monitor.py drives this via
-            # config.json, same as everything else here - this script just
-            # renders whatever it finds. Swap in the single override poster
-            # and force the appearance's status text to "NOW PLAYING".
-            plex_state = config.get("plex_now_playing", {})
-            plex_filename = plex_state.get("filename")
-            # Trust the flag only as far as the file it points at actually
-            # existing. plex_monitor.py's deactivate() clears the flag and
-            # deletes the file via two separate HTTP calls - if the process
-            # (or posterframe-web) gets interrupted between them, "active"
-            # can be stuck true with nothing left to show. Falling back to
-            # normal rotation here means a stale flag never blanks the
-            # display outright; it just quietly stops overriding anything
-            # until plex_monitor.py or a reconnect sorts the flag out.
-            plex_active = bool(
-                plex_state.get("active") and plex_filename
-                and os.path.exists(os.path.join(POSTER_DIR, plex_filename))
-            )
+            # plex_active/plex_filename were already computed up front,
+            # before the schedule check. Swap in the single override
+            # poster and force the appearance's status text to "NOW
+            # PLAYING".
             if plex_active:
                 order = [plex_filename]
 

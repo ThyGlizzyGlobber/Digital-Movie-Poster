@@ -452,6 +452,8 @@ def load_config():
         "plex_enabled": False,
         "plex_poll_seconds": 15.0,
         "plex_stop_delay_seconds": 30,
+        "plex_override_schedule": False,
+        "plex_schedule_buffer_minutes": 10,
         "plex_username": "",
         "plex_server_name": "",
         "plex_server_url": "",
@@ -744,6 +746,8 @@ def index():
     plex_enabled = config.get("plex_enabled", False)
     plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
     plex_stop_delay_seconds = config.get("plex_stop_delay_seconds", 30)
+    plex_override_schedule = config.get("plex_override_schedule", False)
+    plex_schedule_buffer_minutes = config.get("plex_schedule_buffer_minutes", 10)
     plex_username = config.get("plex_username", "")
     plex_server_name = config.get("plex_server_name", "")
     plex_home_users = config.get("plex_home_users", [])
@@ -833,6 +837,8 @@ def index():
         plex_enabled=plex_enabled,
         plex_poll_seconds=plex_poll_seconds,
         plex_stop_delay_seconds=plex_stop_delay_seconds,
+        plex_override_schedule=plex_override_schedule,
+        plex_schedule_buffer_minutes=plex_schedule_buffer_minutes,
         plex_username=plex_username,
         plex_server_name=plex_server_name,
         plex_home_users=plex_home_users,
@@ -2315,6 +2321,12 @@ def settings():
         stop_delay = request.form.get("plex_stop_delay_seconds", type=int)
         if stop_delay is not None:
             config["plex_stop_delay_seconds"] = max(0, min(600, stop_delay))
+
+        config["plex_override_schedule"] = "plex_override_schedule" in request.form
+
+        schedule_buffer = request.form.get("plex_schedule_buffer_minutes", type=float)
+        if schedule_buffer is not None:
+            config["plex_schedule_buffer_minutes"] = max(0, min(120, schedule_buffer))
 
         band = request.form.get("plex_band")
         if band in ("top", "bottom", "none"):
