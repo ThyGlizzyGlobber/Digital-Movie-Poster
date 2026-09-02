@@ -582,10 +582,20 @@ def apply_film_grain(image, intensity=0.08, grain_size=1.0):
     return result
 
 
+def poster_media_type(filename):
+    """movie or tv, from the filename prefix - tmdb_<media>_<id>.jpg /
+    tmdbpin_<media>_<id>.jpg encode it directly; justwatch_movie_<id>.jpg
+    and manual uploads are always effectively movie for this purpose (no
+    digital-release concept applies to either the same way). Mirrors
+    slideshow.py's identical helper - kept in sync by hand since the two
+    processes don't share code."""
+    return "tv" if "_tv_" in filename else "movie"
+
+
 def describe_poster(filename, meta):
     """Classifies a poster for the web UI list: where it came from, and
     whether it's out yet. Status uses the same logic the physical display
-    uses for its NOW SHOWING / UPCOMING band."""
+    uses for its NOW SHOWING / COMING SOON band."""
     if filename.startswith("tmdbpin_"):
         kind = "pinned"
     elif filename.startswith("tmdb_"):
@@ -597,12 +607,21 @@ def describe_poster(filename, meta):
     raw_date = info.get("release_date")
     status = "none"
 
-    # Prefer digital_release_date when it's known - a movie can be showing
-    # in cinemas for months before it's actually watchable at home, and
-    # "showing" here is meant to answer "can I watch this", not "has it hit
-    # cinemas". Falls back to the theatrical release_date for TV (no digital
-    # concept on TMDb) and for movies TMDb has no digital date for yet.
-    effective_date = info.get("digital_release_date") or raw_date
+    # For movies, "showing" means digitally available, not just released in
+    # cinemas - a movie can sit in theatres for months before it's watchable
+    # at home. So a movie with no known digital_release_date is "upcoming"
+    # even if its theatrical release_date has already passed - confirmed
+    # digitally available is the bar, not "we haven't checked yet" or "TMDb
+    # genuinely has nothing recorded" (brand new theatrical releases
+    # routinely have no digital date on TMDb for months). TV has no
+    # digital-release concept on TMDb, so it keeps using release_date/
+    # air-date directly.
+    if poster_media_type(filename) == "tv":
+        effective_date = raw_date
+    else:
+        effective_date = info.get("digital_release_date")
+        if not effective_date and raw_date:
+            status = "upcoming"
 
     if effective_date:
         try:

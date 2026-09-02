@@ -122,16 +122,36 @@ def get_billing_font(size):
     return _billing_font_cache[size]
 
 
-def compute_status_text(meta):
-    # Prefer digital_release_date when it's known - a movie can sit in
-    # cinemas for months before it's actually watchable at home, and this
-    # band is meant to answer "can I watch this", not "has it hit cinemas".
-    # Falls back to release_date for TV (no digital concept on TMDb) and for
-    # movies TMDb has no digital date for yet - see app.py's describe_poster,
-    # which uses the identical fallback for the web UI's own status badge.
+def poster_media_type(filename):
+    """movie or tv, from the filename prefix - tmdb_<media>_<id>.jpg /
+    tmdbpin_<media>_<id>.jpg encode it directly; justwatch_movie_<id>.jpg
+    and manual uploads are always effectively movie for this purpose (no
+    digital-release concept applies to either the same way)."""
+    return "tv" if "_tv_" in filename else "movie"
+
+
+def compute_status_text(filename, meta):
+    # For movies, "showing" means digitally available, not just released in
+    # cinemas - a movie can sit in theatres for months before it's watchable
+    # at home, and this band is meant to answer "can I watch this", not "has
+    # it hit cinemas". So a movie with no known digital_release_date is
+    # COMING SOON even if its theatrical release_date has already passed -
+    # confirmed digitally available is the bar, not "we don't know yet" or
+    # "TMDb genuinely has nothing recorded" (checked directly: brand new
+    # theatrical releases routinely have no digital date on TMDb at all for
+    # months). TV has no digital-release concept on TMDb, so it keeps using
+    # release_date/air-date directly. See app.py's describe_poster, which
+    # uses the identical logic for the web UI's own status badge.
     if not meta:
         return None
-    effective_date = meta.get("digital_release_date") or meta.get("release_date")
+
+    if poster_media_type(filename) == "tv":
+        effective_date = meta.get("release_date")
+    else:
+        effective_date = meta.get("digital_release_date")
+        if not effective_date:
+            return "COMING SOON" if meta.get("release_date") else None
+
     if not effective_date:
         return None
     try:
@@ -151,11 +171,11 @@ def compute_date_text(meta):
     return release_date.strftime("%b %d").upper()
 
 
-def resolve_band_text(content_type, meta, custom_text):
+def resolve_band_text(content_type, filename, meta, custom_text):
     if content_type == "custom":
         return custom_text.strip() if custom_text and custom_text.strip() else None
     if content_type == "status":
-        return compute_status_text(meta)
+        return compute_status_text(filename, meta)
     if content_type == "date":
         return compute_date_text(meta)
     if content_type == "now_playing":
@@ -190,6 +210,7 @@ def fit_text_font(draw, canvas_w, text, font_info, base_size, bold, max_width_ra
 def build_composited_poster(source_path, meta, canvas_w, canvas_h, text_rgb, band_bg_rgb,
                              position, top_content, bottom_content,
                              top_custom_text, bottom_custom_text, text_size_pct, font_info):
+    filename = os.path.basename(source_path)
     poster = Image.open(source_path).convert("RGB")
     poster_w, poster_h = poster.size
 
@@ -229,7 +250,7 @@ def build_composited_poster(source_path, meta, canvas_w, canvas_h, text_rgb, ban
     # band's "natural" size already sat at fit_text_font's width ceiling by
     # ~120% on the slider, leaving 150-200% nowhere to go. Clamping to the
     # band is still needed so text can't overflow a genuinely tiny one.
-    top_text = resolve_band_text(top_content, meta, top_custom_text)
+    top_text = resolve_band_text(top_content, filename, meta, top_custom_text)
     if top_text and top_band > 12:
         bold = is_bold_content(top_content)
         target_size = int(canvas_h * 0.045 * scale_factor)
@@ -237,7 +258,7 @@ def build_composited_poster(source_path, meta, canvas_w, canvas_h, text_rgb, ban
         font = fit_text_font(draw, canvas_w, top_text, font_info, base_size, bold)
         draw_centered_text(draw, canvas_w, top_band // 2, top_text, font, text_rgb)
 
-    bottom_text = resolve_band_text(bottom_content, meta, bottom_custom_text)
+    bottom_text = resolve_band_text(bottom_content, filename, meta, bottom_custom_text)
     if bottom_text and bottom_band > 12:
         bold = is_bold_content(bottom_content)
         target_size = int(canvas_h * 0.035 * scale_factor)
@@ -410,6 +431,7 @@ def build_framed_poster(source_path, meta, canvas_w, canvas_h, text_rgb, bg_rgb,
     a small status line above it, and a full cast/crew billing block below
     it - modeled on classic theatrical one-sheets, unlike build_composited_
     poster's full-width poster + leftover-space bands."""
+    filename = os.path.basename(source_path)
     poster = Image.open(source_path).convert("RGB")
     poster_w, poster_h = poster.size
 
@@ -427,7 +449,7 @@ def build_framed_poster(source_path, meta, canvas_w, canvas_h, text_rgb, bg_rgb,
         if billing_lines else 0
     )
 
-    top_text = resolve_band_text(top_content, meta, top_custom_text)
+    top_text = resolve_band_text(top_content, filename, meta, top_custom_text)
     top_zone_height = int(canvas_h * 0.07) if top_text else int(canvas_h * 0.03)
 
     # Poster is scaled to a fraction of canvas width, then capped further if
