@@ -80,8 +80,21 @@ def main():
     # invocation starting before the first one finishes.
     mark_ran_today()
 
-    script = "fetch_justwatch.py" if active_source(config) == "justwatch" else "fetch_posters.py"
-    return subprocess.call([sys.executable, os.path.join(BASE_DIR, script)])
+    source = active_source(config)
+    script = "fetch_justwatch.py" if source == "justwatch" else "fetch_posters.py"
+    log_path = os.path.join(BASE_DIR, f"{source}_sync.log")
+
+    # Same log file "Sync now" already writes (app.py truncates it per run
+    # too) - without this, a scheduled run's entire output went to whatever
+    # this process's own stdout happened to be (systemd's journal, with a
+    # short/volatile retention on a Pi Zero W), which meant the Logs tab's
+    # TMDb/JustWatch sources only ever showed the last *manual* sync and
+    # scheduled runs - the ones actually being asked about - were invisible.
+    with open(log_path, "w") as log_file:
+        return subprocess.call(
+            [sys.executable, os.path.join(BASE_DIR, script)],
+            stdout=log_file, stderr=subprocess.STDOUT,
+        )
 
 
 if __name__ == "__main__":

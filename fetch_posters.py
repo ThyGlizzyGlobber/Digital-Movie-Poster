@@ -85,7 +85,22 @@ def fetch_now_playing_ids(api_key):
 
 
 def expire_old_posters(config, api_key):
-    """Removes TMDb posters whose release date is older than the limit.
+    """Removes TMDb posters that have been sitting in the rotation longer
+    than the limit - measured from when each poster was actually added
+    (poster_meta's added_date, stamped once by /poster-meta and never
+    overwritten), not from the movie's real release date.
+
+    This used to key off release_date instead, which broke badly for
+    Trending/Popular: those categories can surface a film that came out
+    months ago, and a poster like that would be born already past the
+    cutoff - expired again on the very next sync, sometimes under 24 hours
+    after being added. The age limit is meant to bound how long something
+    sits on your frame, not how old the movie is.
+
+    A poster with no added_date yet (mid-migration, or the very run it was
+    first added on, before this run's later metadata-refresh step stamps
+    it) is treated as added today rather than skipped or aged out from
+    unknown data - it simply isn't old enough to expire yet either way.
 
     Returns the set of keys removed, so the sync in the same run can skip
     re-adding them - otherwise a still-popular old title would be deleted
@@ -111,16 +126,13 @@ def expire_old_posters(config, api_key):
         if is_pinned and not include_pinned:
             continue
 
-        raw_date = (info or {}).get("release_date")
-        if not raw_date:
-            continue
-
+        raw_added = (info or {}).get("added_date")
         try:
-            released = datetime.strptime(raw_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            continue
+            added = datetime.strptime(raw_added, "%Y-%m-%d").date() if raw_added else date.today()
+        except ValueError:
+            added = date.today()
 
-        if released > cutoff:
+        if added > cutoff:
             continue
 
         title = (info or {}).get("title", filename)
@@ -130,7 +142,7 @@ def expire_old_posters(config, api_key):
             continue
 
         try:
-            remove_poster(filename, f"{title} (released {raw_date})")
+            remove_poster(filename, f"{title} (added {raw_added or 'unknown date'})")
             expired.add(f"{media}:{item_id}")
         except requests.RequestException as e:
             log(f"Could not expire {title}: {e}")
@@ -165,15 +177,20 @@ def normalise(item, media):
     }
 
 
-def fetch_source(source_key, max_items, min_popularity=0.0, upcoming_months=12):
+def fetch_source(source_key, max_items, min_popularity=0.0, upcoming_months=12, api_key=None):
     """Fetches one category.
 
     min_popularity filters out obscure titles. TMDb's popularity score is
     a relative daily metric - blockbusters sit well above 200, mid-tier
     around 20-80, and obscure titles under 10.
+
+    api_key: see fetch_credits' docstring - same reason (app.py calling this
+    directly for the Discovery preview grid, rather than as a subprocess with
+    the key injected into its environment) needs the same override.
     """
+    api_key = api_key or TMDB_API_KEY
     source = SOURCES[source_key]
-    base_params = {"api_key": TMDB_API_KEY, "language": "en-US"}
+    base_params = {"api_key": api_key, "language": "en-US"}
     if source["media"] == "movie":
         base_params["region"] = REGION
 
@@ -251,20 +268,28 @@ def dedupe(items):
     return result
 
 
-def fetch_credits(media, tmdb_id, cast_count=4):
+def fetch_credits(media, tmdb_id, cast_count=4, api_key=None):
     """Director/writer(s)/producer(s)/composer/cast, for the Framed
     appearance's billing block. Movie and TV credits payloads shape crew
     differently - a movie crew entry has one flat 'job' string, a TV
     (aggregate_credits) entry has a 'jobs' list per person - so they're
     mapped separately. Any role TMDb has nothing for is simply left out of
-    the returned dict; the billing block skips lines it has no data for."""
-    if not TMDB_API_KEY:
+    the returned dict; the billing block skips lines it has no data for.
+
+    api_key defaults to this module's own TMDB_API_KEY (read from the
+    environment this process was launched with, e.g. by app.py's Popen when
+    running as a sync script). app.py itself never has that env var set -
+    it reads the key from .env per-request - so it calls this with an
+    explicit api_key instead, letting it reuse this function directly rather
+    than duplicating TMDb's credits-fetch logic a third time."""
+    api_key = api_key or TMDB_API_KEY
+    if not api_key:
         return {}
     try:
         if media == "movie":
             resp = requests.get(
                 f"{TMDB_BASE}/movie/{tmdb_id}/credits",
-                params={"api_key": TMDB_API_KEY}, timeout=15,
+                params={"api_key": api_key}, timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -280,7 +305,7 @@ def fetch_credits(media, tmdb_id, cast_count=4):
             # whichever season TMDb currently considers "current".
             resp = requests.get(
                 f"{TMDB_BASE}/tv/{tmdb_id}/aggregate_credits",
-                params={"api_key": TMDB_API_KEY}, timeout=15,
+                params={"api_key": api_key}, timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -315,10 +340,58 @@ def fetch_credits(media, tmdb_id, cast_count=4):
     return credits
 
 
-def update_poster_meta(item, credits=None):
+def fetch_digital_release_date(tmdb_id, api_key=None):
+    """Earliest US digital (release type 4) date for a movie, or None if
+    TMDb has no digital release recorded yet - used so the NOW SHOWING /
+    UPCOMING status reflects "can this actually be watched" rather than
+    just "has it hit cinemas".
+
+    US specifically, not the app's own AU region: checked directly against
+    TMDb's real data before building this - AU-specific digital dates are
+    almost never filled in (1 of 11 sampled current titles had one), while
+    US coverage was complete across the same sample. US is a genuinely
+    different market with its own release windowing, so the date itself
+    can be off by weeks from the true AU date, but it's the only signal
+    TMDb reliably has - AU-only would leave most titles reading COMING
+    SOON long after they're actually available.
+
+    TV has no equivalent on TMDb (release_dates is a movie-only endpoint) -
+    callers should only invoke this for media == "movie"."""
+    api_key = api_key or TMDB_API_KEY
+    if not api_key:
+        return None
+    try:
+        resp = requests.get(
+            f"{TMDB_BASE}/movie/{tmdb_id}/release_dates",
+            params={"api_key": api_key}, timeout=15,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+    except requests.RequestException:
+        return None
+
+    us = next((e for e in results if e.get("iso_3166_1") == "US"), None)
+    if not us:
+        return None
+
+    # TMDb dates come back as full ISO datetimes (e.g. "2026-11-17T00:00:00.000Z") -
+    # trimmed to match the plain YYYY-MM-DD this app stores release_date as
+    # everywhere else. A title can have multiple digital releases (rental vs
+    # buy, or a re-release) - the earliest is the one that answers "when did
+    # this become watchable".
+    digital_dates = [
+        rd["release_date"][:10] for rd in us.get("release_dates", [])
+        if rd.get("type") == 4 and rd.get("release_date")
+    ]
+    return min(digital_dates) if digital_dates else None
+
+
+def update_poster_meta(item, credits=None, digital_release_date=None):
     payload = {"release_date": item["release_date"], "title": item["title"]}
     if credits:
         payload["credits"] = credits
+    if digital_release_date:
+        payload["digital_release_date"] = digital_release_date
     resp = requests.post(
         f"{APP_BASE}/poster-meta/{item['filename']}",
         json=payload,
@@ -426,6 +499,17 @@ def main():
     tracked = load_tracked()
     migrate_old_entries(tracked)
 
+    # expire_old_posters() already deleted the actual file for anything in
+    # `expired` - this just keeps the tracking JSON in sync with that. Done
+    # unconditionally, before the "nothing new resolved" early return below,
+    # so a run that expires a title but finds zero new candidates doesn't
+    # leave a phantom tracked entry pointing at a poster that's already gone
+    # (which would then block a legitimate future re-add of that same title,
+    # since the "already tracked" check further down would wrongly skip it).
+    for key in list(tracked.keys()):
+        if key in expired:
+            del tracked[key]
+
     # Collect across all enabled sources, de-duplicating: the same title
     # can easily appear in both trending and popular.
     wanted = {}
@@ -475,21 +559,31 @@ def main():
             media, _, tmdb_id = key.partition(":")
             cast_count = config.get("appearances", {}).get("framed", {}).get("cast_count", 4)
             credits = fetch_credits(media, tmdb_id, cast_count)
-            update_poster_meta(item, credits)
+            # TV has no release_dates equivalent on TMDb - only movies.
+            digital_release_date = fetch_digital_release_date(tmdb_id) if media == "movie" else None
+            update_poster_meta(item, credits, digital_release_date)
         except requests.RequestException as e:
             log(f"Failed to update metadata for {item['title']}: {e}")
 
-    for key in list(tracked.keys()):
-        if key in expired:
-            del tracked[key]
-            continue
-        if key not in wanted:
-            media, _, item_id = key.partition(":")
-            try:
-                remove_poster(f"tmdb_{media}_{item_id}.jpg", tracked[key])
-            except requests.RequestException as e:
-                log(f"Failed to remove {tracked[key]}: {e}")
-            del tracked[key]
+    # Ranking-based eviction - deliberately only when expiry is off. With
+    # expiry on, age (expire_old_posters, above) is the sole removal
+    # criterion - this loop used to run unconditionally, and a title could
+    # get pulled just for slipping a few spots in Trending/Popular that
+    # week, regardless of poster_expiry_days. With expiry off there's no
+    # such conflict - nothing else ever removes anything, so without this
+    # the rotation would just grow forever as new titles are discovered.
+    # This restores the original "stay capped per category, newest
+    # climbers bump out whoever's no longer in today's top ranking"
+    # behavior, but only for that one specific case.
+    if not config.get("poster_expiry_enabled", False):
+        for key in list(tracked.keys()):
+            if key not in wanted:
+                media, _, item_id = key.partition(":")
+                try:
+                    remove_poster(f"tmdb_{media}_{item_id}.jpg", tracked[key])
+                except requests.RequestException as e:
+                    log(f"Failed to remove {tracked[key]}: {e}")
+                del tracked[key]
 
     save_tracked(tracked)
     log(f"Done. Tracking {len(tracked)} auto-fetched poster(s) "

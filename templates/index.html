@@ -239,6 +239,20 @@
   .card .delete-btn{width:22px;height:22px;flex-shrink:0;font-size:.9rem;padding:0;margin-top:1px}
   .card.sortable-ghost{opacity:.35}
 
+  /* Discovery preview grid - same .card/.grid look as the Posters tab, but
+     not draggable (no rotation order here) and with a Pin action instead of
+     delete. discovery-card.added dims the poster once it's already in the
+     rotation, so a re-click isn't offered as if it would do something new. */
+  .discovery-grid{min-height:40px}
+  .card.discovery-card{cursor:default}
+  .card.discovery-card:hover{transform:none}
+  .card.discovery-card.added .poster{opacity:.45}
+  .card.discovery-card .pin-btn{flex-shrink:0;padding:5px 10px;font-size:.72rem;margin-top:1px}
+  .card.discovery-card .pin-btn:disabled{opacity:.6;cursor:wait}
+  .discovery-status{font-size:.82rem;color:var(--text-muted);margin:0 0 12px}
+  .discovery-status.err{color:var(--danger)}
+  .discovery-status:empty{display:none}
+
   .list{display:flex;flex-direction:column;gap:8px}
   .list.hidden{display:none}
   .poster-row{display:flex;align-items:center;gap:12px;background:var(--surface);
@@ -902,7 +916,7 @@
           </div>
 
           <div class="field-group">
-            <label for="poster_expiry_days" class="field-label">Days after release</label>
+            <label for="poster_expiry_days" class="field-label">Days in rotation</label>
             <input type="number" id="poster_expiry_days" name="poster_expiry_days" min="1" max="3650" step="1" value="{{ poster_expiry_days|numfmt }}" form="settingsForm">
           </div>
 
@@ -914,8 +928,11 @@
           </div>
 
           <p class="note" style="margin:12px 0 0;">
-            Applies to whichever source is active. TMDb has no "still in cinemas"
-            flag, so its own <em>now playing</em> list is used as the next best
+            Counts from when a poster was actually added to your rotation, not
+            the movie's real release date &mdash; a trending-but-older title
+            gets the full number of days like anything else. Applies to
+            whichever source is active. TMDb has no "still in cinemas" flag,
+            so its own <em>now playing</em> list is used as the next best
             thing either way: a title past the age limit but still showing in
             cinemas is kept anyway. Your own uploads are never removed by this.
           </p>
@@ -928,6 +945,21 @@
 
         <div class="subtab-panel active" data-subpanel="tmdb">
         <section class="panel">
+          <p class="panel-label">Trending on TMDb</p>
+          <p class="note" style="margin-bottom:14px;">
+            Live results from TMDb's own trending / popular / now-playing lists
+            for the categories enabled below, filtered by your popularity
+            settings. Click a poster to pin it into the rotation right away.
+          </p>
+          <div class="discovery-status" id="tmdbPreviewStatus"></div>
+          <div class="grid discovery-grid" id="tmdbPreviewGrid"></div>
+          <button type="button" class="btn-small" id="tmdbPreviewRefresh" style="margin-top:14px;">Refresh</button>
+        </section>
+
+        <details class="advanced">
+        <summary>Settings &mdash; TMDb sync</summary>
+        <div class="advanced-body">
+        <section class="panel" style="margin-top:2px;">
           <p class="panel-label">Add by link</p>
           <p class="note">
             Paste a TMDb URL to pin a specific title. Pinned posters stay put &mdash;
@@ -1108,9 +1140,25 @@
           </form>
         </section>
         </div>
+        </details>
+        </div>
 
         <div class="subtab-panel" data-subpanel="justwatch">
         <section class="panel">
+          <p class="panel-label">Trending on JustWatch</p>
+          <p class="note" style="margin-bottom:14px;">
+            Live results from JustWatch's Popular movies list, filtered to titles
+            released this year. Click a poster to pin it into the rotation right away.
+          </p>
+          <div class="discovery-status" id="justwatchPreviewStatus"></div>
+          <div class="grid discovery-grid" id="justwatchPreviewGrid"></div>
+          <button type="button" class="btn-small" id="justwatchPreviewRefresh" style="margin-top:14px;">Refresh</button>
+        </section>
+
+        <details class="advanced">
+        <summary>Settings &mdash; JustWatch sync</summary>
+        <div class="advanced-body">
+        <section class="panel" style="margin-top:2px;">
           <p class="panel-label">JustWatch automation</p>
 
           <div class="field-group">
@@ -1153,6 +1201,8 @@
             <button type="submit" class="danger">Purge all JustWatch posters</button>
           </form>
         </section>
+        </div>
+        </details>
         </div>
       </div>
 
@@ -1395,6 +1445,115 @@
     paintThemeIcon();
   });
 
+  // --- Discovery preview grids --------------------------------------------
+  // Live candidates from TMDb/JustWatch, fetched on demand (not on every
+  // page load - only the first time a subtab is actually viewed) and cached
+  // client-side for the rest of this page load so flicking between the TMDb
+  // and JustWatch subtabs doesn't re-fetch. "Refresh" forces a re-fetch.
+  const discoveryPreviewCache = {};
+
+  function escapeHtmlDiscovery(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c=>(
+      {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+    ));
+  }
+
+  function renderDiscoveryGrid(source, items){
+    const grid = document.getElementById(source + 'PreviewGrid');
+    if(!grid) return;
+    grid.innerHTML = items.map(item=>{
+      const year = (item.release_date || '').slice(0, 4);
+      const label = escapeHtmlDiscovery(item.title) + (year ? ' (' + year + ')' : '');
+      const action = item.already_added
+        ? '<span class="badge plain">In rotation</span>'
+        : '<button type="button" class="btn-small pin-btn">Pin</button>';
+      return '<div class="card discovery-card' + (item.already_added ? ' added' : '') + '"'
+        + ' data-media="' + item.media + '" data-id="' + item.id + '">'
+        + '<div class="poster" style="background-image:url(\'' + item.thumb_url.replace(/'/g, "%27") + '\')"></div>'
+        + '<div class="cardfoot"><div class="title">' + label + '</div>' + action + '</div>'
+        + '</div>';
+    }).join('');
+  }
+
+  function loadDiscoveryPreview(source, force){
+    const statusEl = document.getElementById(source + 'PreviewStatus');
+    const grid = document.getElementById(source + 'PreviewGrid');
+    if(!statusEl || !grid) return;
+
+    if(!force && discoveryPreviewCache[source]){
+      renderDiscoveryGrid(source, discoveryPreviewCache[source]);
+      return;
+    }
+
+    statusEl.className = 'discovery-status';
+    statusEl.textContent = 'Loading…';
+    grid.innerHTML = '';
+
+    fetch('/discovery-preview/' + source).then(r=>r.json()).then(data=>{
+      if(!data.ok){
+        statusEl.className = 'discovery-status err';
+        statusEl.textContent = data.error || 'Could not load results.';
+        return;
+      }
+      discoveryPreviewCache[source] = data.items;
+      statusEl.className = 'discovery-status';
+      statusEl.textContent = data.items.length ? '' : (
+        source === 'tmdb'
+          ? 'No results - check that at least one category is enabled below.'
+          : 'No results found for this year yet.'
+      );
+      renderDiscoveryGrid(source, data.items);
+    }).catch(()=>{
+      statusEl.className = 'discovery-status err';
+      statusEl.textContent = 'Could not reach the server.';
+    });
+  }
+
+  ['tmdb', 'justwatch'].forEach(source=>{
+    const grid = document.getElementById(source + 'PreviewGrid');
+    const refreshBtn = document.getElementById(source + 'PreviewRefresh');
+    if(refreshBtn) refreshBtn.addEventListener('click', ()=> loadDiscoveryPreview(source, true));
+    if(!grid) return;
+
+    grid.addEventListener('click', e=>{
+      const btn = e.target.closest('.pin-btn');
+      if(!btn) return;
+      const card = btn.closest('.discovery-card');
+      const media = card.dataset.media;
+      const id = card.dataset.id;
+
+      btn.disabled = true;
+      btn.textContent = 'Pinning…';
+
+      // Pinning resizes+grains a full poster server-side, same as a normal
+      // upload - can take well over 30s on a Pi Zero W (see CLAUDE.md), so
+      // this is a real wait, not a formality.
+      fetch('/discovery-pin', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({media: media, id: Number(id)}),
+      }).then(r=>r.json()).then(data=>{
+        if(!data.ok){
+          btn.disabled = false;
+          btn.textContent = 'Pin';
+          alert(data.error || 'Could not pin this title.');
+          return;
+        }
+        card.classList.add('added');
+        btn.outerHTML = '<span class="badge plain">In rotation</span>';
+        const cached = discoveryPreviewCache[source];
+        if(cached){
+          const entry = cached.find(it => String(it.id) === id && it.media === media);
+          if(entry) entry.already_added = true;
+        }
+      }).catch(()=>{
+        btn.disabled = false;
+        btn.textContent = 'Pin';
+        alert('Could not reach the server.');
+      });
+    });
+  });
+
   // --- Tabs -------------------------------------------------------------
   const tabNav = document.getElementById('tabNav');
   const panels = document.querySelectorAll('.tab-panel');
@@ -1408,6 +1567,10 @@
     });
     panels.forEach(p=>p.classList.toggle('active', p.dataset.panel === name));
     if(matched){ try{ sessionStorage.setItem('posterframe_tab', name); }catch(e){} }
+    if(name === 'discovery'){
+      const activeChip = document.querySelector('#discoverySubtabs button.active');
+      loadDiscoveryPreview(activeChip ? activeChip.dataset.subtab : 'tmdb');
+    }
     return matched;
   }
 
@@ -1505,6 +1668,13 @@
       b.classList.toggle('active', b.dataset.subtab === name));
     discoverySubpanels.forEach(p=>p.classList.toggle('active', p.dataset.subpanel === name));
     try{ sessionStorage.setItem('posterframe_discovery_subtab', name); }catch(e){}
+    // Only fetch if Discovery is the tab actually on screen right now - this
+    // also runs when restoring the saved subtab on page load, which can
+    // happen while a completely different main tab is active.
+    const discoveryPanel = document.querySelector('.tab-panel[data-panel="discovery"]');
+    if(discoveryPanel && discoveryPanel.classList.contains('active')){
+      loadDiscoveryPreview(name);
+    }
   }
 
   if(discoverySubtabs){

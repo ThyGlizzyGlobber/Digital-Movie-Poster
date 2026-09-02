@@ -123,13 +123,22 @@ def get_billing_font(size):
 
 
 def compute_status_text(meta):
-    if not meta or not meta.get("release_date"):
+    # Prefer digital_release_date when it's known - a movie can sit in
+    # cinemas for months before it's actually watchable at home, and this
+    # band is meant to answer "can I watch this", not "has it hit cinemas".
+    # Falls back to release_date for TV (no digital concept on TMDb) and for
+    # movies TMDb has no digital date for yet - see app.py's describe_poster,
+    # which uses the identical fallback for the web UI's own status badge.
+    if not meta:
+        return None
+    effective_date = meta.get("digital_release_date") or meta.get("release_date")
+    if not effective_date:
         return None
     try:
-        release_date = datetime.strptime(meta["release_date"], "%Y-%m-%d").date()
+        release_date = datetime.strptime(effective_date, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         return None
-    return "NOW SHOWING" if release_date <= date.today() else "UPCOMING"
+    return "NOW SHOWING" if release_date <= date.today() else "COMING SOON"
 
 
 def compute_date_text(meta):

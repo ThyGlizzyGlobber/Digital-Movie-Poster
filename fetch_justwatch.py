@@ -149,14 +149,19 @@ def fetch_popular_titles():
     return titles
 
 
-def resolve_tmdb_id(title, year):
+def resolve_tmdb_id(title, year, api_key=None):
     """Title+year search against TMDb - the only bridge between JustWatch's
     id space and TMDb's. Prefers an exact (case-insensitive) title match in
     the given year; falls back to TMDb's own top search result, since
-    search is already relevance-ranked, rather than giving up."""
-    if not TMDB_API_KEY:
+    search is already relevance-ranked, rather than giving up.
+
+    api_key: see fetch_posters.fetch_credits' docstring - same reasoning
+    (app.py calling this in-process for the Discovery preview grid, not as a
+    subprocess with the key injected into its environment)."""
+    api_key = api_key or TMDB_API_KEY
+    if not api_key:
         return None
-    params = {"api_key": TMDB_API_KEY, "query": title, "language": "en-US"}
+    params = {"api_key": api_key, "query": title, "language": "en-US"}
     if year:
         params["year"] = year
     try:
@@ -178,7 +183,15 @@ def resolve_tmdb_id(title, year):
 def expire_old_posters(config):
     """Mirrors fetch_posters.py's expiry against the same shared
     poster_expiry_* settings - one cleanup policy for whichever source is
-    active, rather than a second set of controls to keep in sync."""
+    active, rather than a second set of controls to keep in sync.
+
+    Measured from poster_meta's added_date (when the poster actually landed
+    in your rotation), not release_date. JustWatch's "Popular" list is not
+    "new releases" - it can surface a film that came out months ago, and
+    keying off release_date meant a title like that was born already past
+    the age cutoff, so the very next sync expired it again almost
+    immediately. See fetch_posters.py's expire_old_posters for the full
+    reasoning - same fix, same shared setting."""
     if not config.get("poster_expiry_enabled", False):
         return set()
 
@@ -193,14 +206,12 @@ def expire_old_posters(config):
             continue  # not a JustWatch-sourced file
 
         item_id = int(match.group(1))
-        raw_date = (info or {}).get("release_date")
-        if not raw_date:
-            continue
+        raw_added = (info or {}).get("added_date")
         try:
-            released = datetime.strptime(raw_date, "%Y-%m-%d").date()
-        except (ValueError, TypeError):
-            continue
-        if released > cutoff:
+            added = datetime.strptime(raw_added, "%Y-%m-%d").date() if raw_added else date.today()
+        except ValueError:
+            added = date.today()
+        if added > cutoff:
             continue
 
         title = (info or {}).get("title", filename)
@@ -209,7 +220,7 @@ def expire_old_posters(config):
             continue
 
         try:
-            fetch_posters.remove_poster(filename, f"{title} (released {raw_date})")
+            fetch_posters.remove_poster(filename, f"{title} (added {raw_added or 'unknown date'})")
             expired.add(str(item_id))
         except requests.RequestException as e:
             log(f"Could not expire {title}: {e}")
@@ -242,13 +253,9 @@ def main():
     expired = expire_old_posters(config)
 
     # How many candidates to resolve from JustWatch's current top-this-year
-    # ranking per run - not a cap on how many JustWatch posters may exist at
-    # once. It used to be both: anything already tracked that fell outside
-    # this run's top `max_titles` got deleted below regardless of age, so a
-    # title could get pulled after a few days just from ranking noise, with
-    # poster_expiry_days never even consulted. Age (expire_old_posters,
-    # above) is now the only removal criterion - this just bounds how far
-    # down the list a single sync bothers searching for new additions.
+    # ranking per run. Whether this also acts as a hard cap on how many
+    # JustWatch posters can exist at once depends on whether expiry is
+    # enabled - see the ranking-based eviction block below for why.
     max_titles = max(1, min(40, int(config.get("justwatch_max_titles", 10))))
     this_year = date.today().year
 
@@ -316,9 +323,29 @@ def main():
         try:
             cast_count = config.get("appearances", {}).get("framed", {}).get("cast_count", 4)
             credits = fetch_posters.fetch_credits("movie", key, cast_count)
-            fetch_posters.update_poster_meta(item, credits)
+            digital_release_date = fetch_posters.fetch_digital_release_date(key)
+            fetch_posters.update_poster_meta(item, credits, digital_release_date)
         except requests.RequestException as e:
             log(f"Failed to update metadata for {item['title']}: {e}")
+
+    # Ranking-based eviction - deliberately only when expiry is off. With
+    # expiry on, age is the sole removal criterion (see expire_old_posters'
+    # docstring for why: this exact loop used to run unconditionally, and a
+    # title could get pulled just for slipping a few spots in the ranking,
+    # regardless of poster_expiry_days). With expiry off there's no such
+    # conflict - nothing else ever removes anything, so without this the
+    # rotation would just grow forever as new titles are discovered. This
+    # restores the original "stay capped at max_titles, newest climbers
+    # bump out whoever's no longer in today's top ranking" behavior, but
+    # only for that one specific case.
+    if not config.get("poster_expiry_enabled", False):
+        for key in list(tracked.keys()):
+            if key not in wanted:
+                try:
+                    fetch_posters.remove_poster(f"justwatch_movie_{key}.jpg", tracked[key])
+                except requests.RequestException as e:
+                    log(f"Failed to remove {tracked[key]}: {e}")
+                del tracked[key]
 
     save_tracked(tracked)
     log(f"Done. Tracking {len(tracked)} JustWatch-sourced poster(s).")

@@ -4,6 +4,8 @@
 # Per-install state and user content
 config.json
 tmdb_tracked.json
+justwatch_tracked.json
+.last_scheduled_sync
 .last_reboot
 .update.lock
 

@@ -9,12 +9,23 @@ import tempfile
 import threading
 import uuid
 from datetime import date, datetime, timedelta
+from io import BytesIO
 from urllib.parse import urlencode
 import numpy as np
 import requests
 from flask import Flask, request, redirect, url_for, render_template, jsonify
 from werkzeug.utils import secure_filename
 from PIL import Image, ImageFilter, ImageEnhance
+
+# fetch_posters.py/fetch_justwatch.py normally only ever talk to app.py over
+# HTTP (as detached subprocesses) - never the other way around, since only
+# this process can safely write config.json (save_config's flock). This is
+# the one exception: importing their pure category-fetch/scrape/resolve
+# helpers (read-only, no config writes) for the Discovery tab's live preview
+# grid, rather than duplicating that logic a third time. Both modules have no
+# import-time side effects beyond reading an env var, so this is safe.
+import fetch_posters
+import fetch_justwatch
 
 app = Flask(__name__)
 
@@ -106,7 +117,11 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # Commit title convention: "[v1.4.0] Fix schedule wake bug". update.sh only
 # ever hands back the raw subject line (CURRENT_MSG/REMOTE_MSG) - parsing
 # happens here so there's one implementation of the convention, not two.
-VERSION_TAG_RE = re.compile(r"^\[v(\d+\.\d+\.\d+)\]\s*(.*)$", re.IGNORECASE)
+# \d+(?:\.\d+)+ (not a fixed \d+\.\d+\.\d+) because the version scheme has
+# grown a 4th segment over time (v1.0.6.5) - a fixed 3-part pattern stopped
+# matching current tags entirely, silently falling back to the raw commit
+# sha everywhere this is displayed.
+VERSION_TAG_RE = re.compile(r"^\[v(\d+(?:\.\d+)+)\]\s*(.*)$", re.IGNORECASE)
 
 # Must stay in step with SOURCES in fetch_posters.py
 TMDB_SOURCE_KEYS = [
@@ -569,8 +584,8 @@ def apply_film_grain(image, intensity=0.08, grain_size=1.0):
 
 def describe_poster(filename, meta):
     """Classifies a poster for the web UI list: where it came from, and
-    whether it's out yet. Status uses the same release-date logic the
-    physical display uses for its NOW SHOWING / UPCOMING band."""
+    whether it's out yet. Status uses the same logic the physical display
+    uses for its NOW SHOWING / UPCOMING band."""
     if filename.startswith("tmdbpin_"):
         kind = "pinned"
     elif filename.startswith("tmdb_"):
@@ -582,9 +597,16 @@ def describe_poster(filename, meta):
     raw_date = info.get("release_date")
     status = "none"
 
-    if raw_date:
+    # Prefer digital_release_date when it's known - a movie can be showing
+    # in cinemas for months before it's actually watchable at home, and
+    # "showing" here is meant to answer "can I watch this", not "has it hit
+    # cinemas". Falls back to the theatrical release_date for TV (no digital
+    # concept on TMDb) and for movies TMDb has no digital date for yet.
+    effective_date = info.get("digital_release_date") or raw_date
+
+    if effective_date:
         try:
-            released = datetime.strptime(raw_date, "%Y-%m-%d").date()
+            released = datetime.strptime(effective_date, "%Y-%m-%d").date()
             status = "showing" if released <= date.today() else "upcoming"
         except (ValueError, TypeError):
             status = "none"
@@ -934,6 +956,17 @@ def poster_meta(filename):
     existing["title"] = data.get("title", existing.get("title"))
     if "credits" in data:
         existing["credits"] = data["credits"]
+    if "digital_release_date" in data:
+        existing["digital_release_date"] = data["digital_release_date"]
+    # Stamped once, on whichever call is the first to ever set metadata for
+    # this filename, and never touched again - this is what age-based expiry
+    # (fetch_posters.py/fetch_justwatch.py's expire_old_posters) actually
+    # measures from. Deliberately not release_date: a sync category can
+    # surface a film that came out months ago, and expiring by release date
+    # meant a poster like that could get pulled again within a day of being
+    # added - the age limit is meant to bound time in *your* rotation, not
+    # the movie's real age.
+    existing.setdefault("added_date", date.today().isoformat())
     config["poster_meta"][safe_name] = existing
     save_config(config)
 
@@ -1003,17 +1036,210 @@ def justwatch_sync_now():
     return redirect(url_for("index"))
 
 
+# How many candidates the JustWatch preview grid resolves against TMDb per
+# request - independent of justwatch_max_titles (which caps the *auto-sync's*
+# target rotation size, not how much this Discovery tab lets you browse).
+# Each candidate is one sequential TMDb search call, so this is also the main
+# knob on how long a preview fetch takes (~15-20s at 40 on a Pi Zero W) - fine
+# for an explicit, on-demand, loading-state-shown action.
+JUSTWATCH_PREVIEW_CAP = 40
+
+# TMDb's own page size - how many items fetch_source() pulls per category for
+# the preview grid, deliberately not capped down to tmdb_source_limits (which
+# governs what the *auto-sync* actually keeps) so the grid shows more than
+# just what would get synced.
+TMDB_PREVIEW_PER_CATEGORY = 20
+
+
+@app.route("/discovery-preview/tmdb", methods=["GET"])
+def discovery_preview_tmdb():
+    config = load_config()
+    api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
+    if not api_key:
+        return jsonify({"ok": False, "error": "TMDb API key is not configured"})
+
+    mode = config.get("tmdb_media_mode", "movie")
+    if mode not in ("movie", "tv"):
+        mode = "movie"
+    sources = config.get("tmdb_sources") or fetch_posters.DEFAULT_SOURCES
+    enabled = [
+        k for k, src in fetch_posters.SOURCES.items()
+        if src["media"] == mode and sources.get(k)
+    ]
+    if not enabled:
+        return jsonify({"ok": True, "items": []})
+
+    min_popularity = float(config.get("tmdb_min_popularity", 0))
+    min_pop_upcoming = float(config.get("tmdb_min_popularity_upcoming", 10))
+    upcoming_months = float(config.get("tmdb_upcoming_months", 12))
+
+    wanted = {}
+    for source_key in enabled:
+        is_upcoming = fetch_posters.SOURCES[source_key].get("discover") == "upcoming"
+        threshold = min_pop_upcoming if is_upcoming else min_popularity
+        try:
+            for item in fetch_posters.fetch_source(
+                source_key, TMDB_PREVIEW_PER_CATEGORY, threshold, upcoming_months, api_key=api_key,
+            ):
+                wanted.setdefault(item["key"], item)
+        except requests.RequestException as e:
+            print(f"Discovery preview: failed to fetch {source_key}: {e}")
+
+    items = []
+    for item in wanted.values():
+        media, _, item_id = item["key"].partition(":")
+        items.append({
+            "media": media,
+            "id": int(item_id),
+            "title": item["title"],
+            "release_date": item["release_date"],
+            "thumb_url": f"https://image.tmdb.org/t/p/w342{item['poster_path']}",
+            "already_added": poster_already_in_rotation(config, media, item_id) is not None,
+        })
+
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/discovery-preview/justwatch", methods=["GET"])
+def discovery_preview_justwatch():
+    config = load_config()
+    api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
+    if not api_key:
+        return jsonify({"ok": False, "error": "TMDb API key is not configured"})
+
+    try:
+        candidates = fetch_justwatch.fetch_popular_titles()
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"ok": False, "error": f"Could not reach JustWatch: {e}"})
+
+    this_year = date.today().year
+    this_year_titles = [c for c in candidates if c.get("year") == this_year]
+
+    wanted = {}
+    for entry in this_year_titles:
+        if len(wanted) >= JUSTWATCH_PREVIEW_CAP:
+            break
+        result = fetch_justwatch.resolve_tmdb_id(entry["title"], entry["year"], api_key=api_key)
+        if not result or not result.get("poster_path"):
+            continue
+        item_id = str(result["id"])
+        wanted.setdefault(item_id, {
+            "id": item_id,
+            "title": result.get("title") or entry["title"],
+            "release_date": result.get("release_date") or "",
+            "poster_path": result["poster_path"],
+        })
+
+    items = [
+        {
+            "media": "movie",
+            "id": int(item["id"]),
+            "title": item["title"],
+            "release_date": item["release_date"],
+            "thumb_url": f"https://image.tmdb.org/t/p/w342{item['poster_path']}",
+            "already_added": poster_already_in_rotation(config, "movie", item["id"]) is not None,
+        }
+        for item in wanted.values()
+    ]
+
+    return jsonify({"ok": True, "items": items})
+
+
 TMDB_URL_RE = re.compile(r"themoviedb\.org/(movie|tv)/(\d+)")
+
+
+def poster_already_in_rotation(config, media, item_id):
+    """The same TMDb title can end up in the rotation under three different
+    filenames depending on how it got there (auto-synced, manually pinned,
+    or JustWatch-sourced) - checked here so pinning, and the Discovery
+    preview grid's "already in rotation" state, agree on one definition
+    rather than each guessing independently."""
+    candidates = [f"tmdb_{media}_{item_id}.jpg", f"tmdbpin_{media}_{item_id}.jpg"]
+    if media == "movie":
+        candidates.append(f"justwatch_movie_{item_id}.jpg")
+    order = config.get("order", [])
+    return next((f for f in candidates if f in order), None)
+
+
+def pin_tmdb_title(media, item_id):
+    """Core of pinning a specific TMDb title into the rotation - shared by
+    /tmdb-add-link (paste a URL) and /discovery-pin (click a poster in the
+    Discovery preview grid).
+
+    Saved with a 'tmdbpin_' prefix rather than 'tmdb_', which keeps it
+    outside the auto-sync's bookkeeping - so a pinned title survives the
+    next sync instead of being cleaned up as 'no longer trending'.
+
+    Returns (filename, title). Raises ValueError for a problem worth
+    showing the user directly (no API key configured, or TMDb has no poster
+    for this id) or requests.RequestException for a network failure -
+    callers decide how to surface each."""
+    config = load_config()
+    existing = poster_already_in_rotation(config, media, item_id)
+    if existing:
+        meta = config.get("poster_meta", {}).get(existing) or {}
+        return existing, meta.get("title", "Untitled")
+
+    api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
+    if not api_key:
+        raise ValueError("TMDb API key is not configured")
+
+    detail = requests.get(
+        f"https://api.themoviedb.org/3/{media}/{item_id}",
+        params={"api_key": api_key, "language": "en-US"},
+        timeout=15,
+    )
+    detail.raise_for_status()
+    data = detail.json()
+
+    poster_path = data.get("poster_path")
+    if not poster_path:
+        raise ValueError("This title has no poster art on TMDb")
+
+    title = data.get("title") or data.get("name") or "Untitled"
+    released = data.get("release_date") or data.get("first_air_date") or ""
+
+    image = requests.get(f"https://image.tmdb.org/t/p/original{poster_path}", timeout=15)
+    image.raise_for_status()
+
+    filename = f"tmdbpin_{media}_{item_id}.jpg"
+    intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
+    grain_enabled = config.get("grain_enabled", True)
+
+    source = Image.open(BytesIO(image.content))
+    source.load()
+
+    source.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
+    prepare_poster(source, intensity,
+        config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH), grain_enabled).save(os.path.join(POSTER_DIR, filename))
+
+    # Unlike the old /tmdb-add-link (which only saved title/release_date),
+    # this fetches credits too - the sync scripts already do this, so a
+    # manually pinned title shouldn't be the one path that skips the
+    # Framed appearance's cast/crew billing block.
+    cast_count = config.get("appearances", {}).get("framed", {}).get("cast_count", 4)
+    credits = fetch_posters.fetch_credits(media, item_id, cast_count, api_key=api_key)
+    # TV has no release_dates equivalent on TMDb - only movies.
+    digital_release_date = (
+        fetch_posters.fetch_digital_release_date(item_id, api_key=api_key) if media == "movie" else None
+    )
+
+    if filename not in config["order"]:
+        config["order"].append(filename)
+    meta = {"release_date": released, "title": title, "added_date": date.today().isoformat()}
+    if credits:
+        meta["credits"] = credits
+    if digital_release_date:
+        meta["digital_release_date"] = digital_release_date
+    config.setdefault("poster_meta", {})[filename] = meta
+    save_config(config)
+    print(f"Pinned: {title}")
+
+    return filename, title
 
 
 @app.route("/tmdb-add-link", methods=["POST"])
 def tmdb_add_link():
-    """Pin a specific title by TMDb URL.
-
-    These are saved with a 'tmdbpin_' prefix rather than 'tmdb_', which
-    keeps them outside the auto-sync's bookkeeping - so a pinned title
-    survives the next sync instead of being cleaned up as 'no longer
-    trending'."""
     raw = request.form.get("tmdb_url", "").strip()
     match = TMDB_URL_RE.search(raw)
 
@@ -1025,54 +1251,35 @@ def tmdb_add_link():
     else:
         media, item_id = match.group(1), match.group(2)
 
-    api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
-    if not api_key:
-        return redirect(url_for("index"))
-
     try:
-        detail = requests.get(
-            f"https://api.themoviedb.org/3/{media}/{item_id}",
-            params={"api_key": api_key, "language": "en-US"},
-            timeout=15,
-        )
-        detail.raise_for_status()
-        data = detail.json()
-
-        poster_path = data.get("poster_path")
-        if not poster_path:
-            return redirect(url_for("index"))
-
-        title = data.get("title") or data.get("name") or "Untitled"
-        released = data.get("release_date") or data.get("first_air_date") or ""
-
-        image = requests.get(f"https://image.tmdb.org/t/p/original{poster_path}", timeout=15)
-        image.raise_for_status()
-    except requests.RequestException as e:
+        pin_tmdb_title(media, item_id)
+    except (ValueError, requests.RequestException) as e:
         print(f"TMDb link add failed: {e}")
-        return redirect(url_for("index"))
-
-    filename = f"tmdbpin_{media}_{item_id}.jpg"
-    config = load_config()
-    intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
-    grain_enabled = config.get("grain_enabled", True)
-
-    from io import BytesIO
-    source = Image.open(BytesIO(image.content))
-    source.load()
-
-    source.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
-    prepare_poster(source, intensity,
-        config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH), grain_enabled).save(os.path.join(POSTER_DIR, filename))
-
-    if filename not in config["order"]:
-        config["order"].append(filename)
-    config.setdefault("poster_meta", {})[filename] = {
-        "release_date": released, "title": title,
-    }
-    save_config(config)
-    print(f"Pinned: {title}")
 
     return redirect(url_for("index"))
+
+
+@app.route("/discovery-pin", methods=["POST"])
+def discovery_pin():
+    """Click-to-pin from the Discovery tab's live preview grid - same
+    underlying pin as /tmdb-add-link, just fed a media/id pair the frontend
+    already has from /discovery-preview/* instead of a pasted URL, and
+    answering with JSON so the grid tile can update itself in place instead
+    of a full page reload."""
+    data = request.get_json(silent=True) or {}
+    media = data.get("media")
+    item_id = data.get("id")
+    if media not in ("movie", "tv") or not item_id:
+        return jsonify({"ok": False, "error": "Invalid title"}), 400
+
+    try:
+        filename, title = pin_tmdb_title(media, str(item_id))
+    except ValueError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    except requests.RequestException as e:
+        return jsonify({"ok": False, "error": f"Could not reach TMDb: {e}"}), 502
+
+    return jsonify({"ok": True, "filename": filename, "title": title})
 
 
 @app.route("/purge-tmdb", methods=["POST"])
