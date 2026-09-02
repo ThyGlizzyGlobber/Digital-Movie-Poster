@@ -1283,9 +1283,9 @@
             <label for="plex_schedule_buffer_minutes" class="field-label">Buffer after playback stops (minutes)</label>
             <input type="number" id="plex_schedule_buffer_minutes" name="plex_schedule_buffer_minutes" min="0" max="120" step="1"
                    value="{{ plex_schedule_buffer_minutes|numfmt }}" form="settingsForm">
-            <p class="note" style="margin:6px 0 0;">Keeps ignoring the schedule for this long after Plex stops,
-              so browsing between episodes or titles doesn't turn the display off. 0 lets the schedule take
-              back over immediately.</p>
+            <p class="note" style="margin:6px 0 0;">Keeps both the "Now Playing" poster and the display awake
+              for this long after Plex stops, so browsing between episodes or titles doesn't flicker back to
+              normal rotation or turn the display off. 0 reverts immediately.</p>
           </div>
 
           {% if plex_home_users|length > 1 %}
@@ -1316,7 +1316,8 @@
               <input type="number" id="plex_stop_delay_seconds" name="plex_stop_delay_seconds" min="0" max="600" step="5"
                      value="{{ plex_stop_delay_seconds|numfmt }}" form="settingsForm">
               <p class="note" style="margin:6px 0 0;">Avoids flickering back to normal rotation during a pause
-                or between episodes. 0 switches back instantly.</p>
+                or between episodes. 0 switches back instantly. If "Let Plex override the schedule" is on,
+                the actual wait is never shorter than that setting's buffer.</p>
             </div>
 
             <div class="field-group">

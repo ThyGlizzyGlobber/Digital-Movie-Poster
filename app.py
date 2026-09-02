@@ -453,7 +453,7 @@ def load_config():
         "plex_poll_seconds": 15.0,
         "plex_stop_delay_seconds": 30,
         "plex_override_schedule": False,
-        "plex_schedule_buffer_minutes": 10,
+        "plex_schedule_buffer_minutes": 2,
         "plex_username": "",
         "plex_server_name": "",
         "plex_server_url": "",
@@ -747,7 +747,7 @@ def index():
     plex_poll_seconds = config.get("plex_poll_seconds", 15.0)
     plex_stop_delay_seconds = config.get("plex_stop_delay_seconds", 30)
     plex_override_schedule = config.get("plex_override_schedule", False)
-    plex_schedule_buffer_minutes = config.get("plex_schedule_buffer_minutes", 10)
+    plex_schedule_buffer_minutes = config.get("plex_schedule_buffer_minutes", 2)
     plex_username = config.get("plex_username", "")
     plex_server_name = config.get("plex_server_name", "")
     plex_home_users = config.get("plex_home_users", [])

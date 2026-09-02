@@ -198,6 +198,16 @@ def main():
         config = load_config()
         poll_seconds = max(POLL_FLOOR, config.get("plex_poll_seconds", 15.0))
         stop_delay = max(0, config.get("plex_stop_delay_seconds", 30))
+        # When the schedule-override feature is on, the poster and the
+        # screen are meant to hold together as one thing while Plex was
+        # recently active - so the poster's own revert delay is never
+        # shorter than the schedule buffer, even if plex_stop_delay_seconds
+        # itself is set lower. Left alone (still just plex_stop_delay_seconds)
+        # when that feature is off, so it doesn't silently grow for anyone
+        # not using it.
+        if config.get("plex_override_schedule", False):
+            schedule_buffer_seconds = max(0, config.get("plex_schedule_buffer_minutes", 2)) * 60
+            stop_delay = max(stop_delay, schedule_buffer_seconds)
 
         server_url = config.get("plex_server_url")
         username = config.get("plex_username")

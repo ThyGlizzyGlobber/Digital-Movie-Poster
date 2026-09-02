@@ -619,11 +619,11 @@ def plex_should_override_schedule(config, plex_last_active_monotonic):
         return False
     if plex_last_active_monotonic is None:
         return False
-    buffer_minutes = config.get("plex_schedule_buffer_minutes", 10)
+    buffer_minutes = config.get("plex_schedule_buffer_minutes", 2)
     try:
         buffer_minutes = max(0, float(buffer_minutes))
     except (TypeError, ValueError):
-        buffer_minutes = 10
+        buffer_minutes = 2
     return (time.monotonic() - plex_last_active_monotonic) < buffer_minutes * 60
 
 
