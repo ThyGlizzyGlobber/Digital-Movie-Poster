@@ -600,31 +600,26 @@ def display_should_be_on(config, now_time):
     return on_t <= now_time < off_t
 
 
-def plex_should_override_schedule(config, plex_last_active_monotonic):
+def plex_should_override_schedule(config, plex_active):
     """Whether Plex playback should force the display on regardless of the
     schedule - both keeping an already-on display on, and waking one the
     schedule had already turned off, since both are driven by the same
     single check in main()'s poll loop rather than separate on/off code
     paths.
 
-    plex_last_active_monotonic is a timestamp (time.monotonic(), not
-    wall-clock - immune to NTP/DST jumps) of the most recent poll where
-    Plex was seen actively playing, refreshed every poll while it's still
-    playing and left untouched once it stops - so this reads as "still
-    playing" the instant it's called during playback (the timestamp is
-    always ~0s old), and as "within the buffer" for
-    plex_schedule_buffer_minutes after playback actually stops. None means
-    Plex has never been seen playing this run."""
-    if not config.get("plex_override_schedule", False):
-        return False
-    if plex_last_active_monotonic is None:
-        return False
-    buffer_minutes = config.get("plex_schedule_buffer_minutes", 2)
-    try:
-        buffer_minutes = max(0, float(buffer_minutes))
-    except (TypeError, ValueError):
-        buffer_minutes = 2
-    return (time.monotonic() - plex_last_active_monotonic) < buffer_minutes * 60
+    Mirrors plex_active directly, with no buffer of its own. The "how long
+    to keep everything alive after Plex actually stops" job belongs
+    entirely to plex_monitor.py: its own poster-revert delay is floored to
+    plex_schedule_buffer_minutes whenever this feature is on (see
+    plex_monitor.py's stop_delay computation), so plex_now_playing.active -
+    and so plex_active here - already stays True for the full buffer
+    window after playback stops, before plex_monitor.py flips it off. A
+    second, independent buffer here used to track its own "last seen
+    active" timestamp and count the same buffer again from scratch once
+    the flag finally went false - stacking on top of the first wait
+    instead of sharing it, so the display took roughly double the
+    configured buffer to actually turn off."""
+    return bool(config.get("plex_override_schedule", False) and plex_active)
 
 
 def blank_framebuffer():
@@ -735,7 +730,6 @@ def main():
     spinner_stopped = False
     display_on = True
     force_rebuild = False
-    plex_last_active_monotonic = None
 
     # One-time reconciliation: the per-poster composite cache starts empty
     # on every fresh process start, so a poster removed from rotation while
@@ -783,11 +777,9 @@ def main():
                 plex_state.get("active") and plex_filename
                 and os.path.exists(os.path.join(POSTER_DIR, plex_filename))
             )
-            if plex_active:
-                plex_last_active_monotonic = time.monotonic()
 
             if not (display_should_be_on(config, now.time())
-                    or plex_should_override_schedule(config, plex_last_active_monotonic)):
+                    or plex_should_override_schedule(config, plex_active)):
                 if display_on:
                     log("Scheduled off period - turning display off")
                     if current_process:
