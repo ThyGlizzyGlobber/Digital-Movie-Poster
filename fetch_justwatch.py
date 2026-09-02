@@ -305,6 +305,17 @@ def main():
             "poster_path": result["poster_path"],
         }
 
+    # Every currently-tracked title gets a chance to pick up a missing
+    # digital_release_date, not just the ones in this run's `wanted` - a
+    # title that's fallen out of JustWatch's current ranking but is still
+    # kept around (age is the only removal criterion once poster_expiry is
+    # on) would otherwise never have this backfilled, and would stay stuck
+    # showing Now Showing/status purely off release_date forever. Always
+    # movie-only here, unlike fetch_posters.py's TMDb sync.
+    poster_meta = config.get("poster_meta", {})
+    for key in tracked:
+        fetch_posters.backfill_digital_release_date(f"justwatch_movie_{key}.jpg", key, poster_meta)
+
     if not wanted:
         log("No results resolved - leaving the current rotation alone.")
         save_tracked(tracked)

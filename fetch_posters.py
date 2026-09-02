@@ -400,6 +400,38 @@ def update_poster_meta(item, credits=None, digital_release_date=None):
     resp.raise_for_status()
 
 
+def backfill_digital_release_date(filename, tmdb_id, poster_meta, api_key=None):
+    """Fills in digital_release_date for a movie poster that doesn't have
+    one yet - covers two cases the normal per-sync refresh (above, in
+    main()) never touches: posters added before this concept existed, and
+    posters that have since fallen out of the current sync's "wanted" set
+    (still kept in rotation - age is the only removal criterion once
+    poster_expiry is on - but no longer in the loop that refreshes
+    metadata for what's currently trending).
+
+    No-op once a date is found and saved. If TMDb genuinely has no digital
+    release yet, this makes a real request and finds nothing - deliberately
+    left to retry on every future sync rather than caching "no date yet"
+    forever, so a title's status flips from Coming Soon to Now Showing on
+    its own the moment TMDb's data catches up, with no manual re-sync
+    needed. The cost is one extra request per still-undated title per
+    sync, which is small next to what a sync already does."""
+    existing = poster_meta.get(filename) or {}
+    if existing.get("digital_release_date"):
+        return
+    digital_release_date = fetch_digital_release_date(tmdb_id, api_key=api_key)
+    if not digital_release_date:
+        return
+    try:
+        update_poster_meta(
+            {"filename": filename, "title": existing.get("title", ""),
+             "release_date": existing.get("release_date", "")},
+            digital_release_date=digital_release_date,
+        )
+    except requests.RequestException as e:
+        log(f"Could not backfill digital release date for {filename}: {e}")
+
+
 def remove_poster(filename, title):
     resp = requests.post(f"{APP_BASE}/delete/{filename}", timeout=15)
     resp.raise_for_status()
@@ -539,6 +571,19 @@ def main():
                 wanted.setdefault(item["key"], item)
         except requests.RequestException as e:
             log(f"Failed to fetch {source_key}: {e}")
+
+    # Every currently-tracked movie gets a chance to pick up a missing
+    # digital_release_date, not just the ones in this run's `wanted` - a
+    # title that's fallen out of the trending categories but is still kept
+    # around (age is the only removal criterion once poster_expiry is on)
+    # would otherwise never have this backfilled, and would stay stuck
+    # showing Now Showing/status purely off release_date forever.
+    poster_meta = config.get("poster_meta", {})
+    for key in tracked:
+        media, _, tmdb_id = key.partition(":")
+        if media != "movie":
+            continue
+        backfill_digital_release_date(f"tmdb_{media}_{tmdb_id}.jpg", tmdb_id, poster_meta)
 
     if not wanted:
         log("No results returned - leaving the current rotation alone.")

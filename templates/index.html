@@ -424,7 +424,7 @@
               <button id="btnList" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>List</button>
             </div>
             <button type="button" id="randomizeOrderBtn" class="btn-small">Randomise</button>
-            <label class="switch-row" style="font-size:.82rem;" title="Waits 1.5 minutes after a sync finishes (so newly added posters have time to process), then shuffles the rotation order.">
+            <label class="switch-row" style="font-size:.82rem;" title="Shuffles the poster order a couple of minutes after each sync.">
               <span class="switch">
                 <input type="checkbox" name="randomize_after_sync" {{ 'checked' if randomize_after_sync else '' }} form="settingsForm">
                 <span class="switch-track"></span>
@@ -493,22 +493,21 @@
               <label for="poster_max_width" class="field-label">Working width (px)</label>
               <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
-                Posters are downloaded at full resolution and kept that way, but
-                scaled to this width before the grain is applied. Match it to your
-                screen's short edge or a little above &mdash; larger just costs
-                processing time. After changing it, apply the grain below to
-                re-process everything at the new size.
+                How wide posters are resized before display. Match your
+                screen's short edge, then click Apply below.
               </p>
             </div>
 
             <form action="/regrain" method="post">
               <div class="field-group">
-                <label style="display:inline-flex;align-items:center;gap:8px;">
-                  <input type="checkbox" name="grain_enabled" {{ 'checked' if grain_enabled else '' }}>
+                <label class="switch-row" style="display:inline-flex;">
+                  <span class="switch">
+                    <input type="checkbox" name="grain_enabled" {{ 'checked' if grain_enabled else '' }}>
+                    <span class="switch-track"></span>
+                  </span>
                   Film grain enabled
                 </label>
-                <p class="note" style="margin:6px 0 0;">Turning this off skips grain processing entirely
-                  (not just a zero-strength pass) - noticeably faster on weaker hardware like a Pi Zero W.</p>
+                <p class="note" style="margin:6px 0 0;">Gives posters a printed, film-like texture instead of a flat digital look.</p>
               </div>
               <div class="field-group">
                 <div class="field-label"><span>Intensity</span><span class="val" id="grainVal">{{ grain_intensity }}</span></div>
@@ -518,8 +517,7 @@
               <button type="submit" class="primary">Apply to all posters</button>
             </form>
             <p class="note" style="margin:14px 0 0;">
-              Re-processes every poster from its untouched original, so this is
-              non-destructive and repeatable.
+              Safe to run anytime &mdash; never damages your original images.
             </p>
           </div>
         </details>
@@ -593,7 +591,7 @@
               <select id="classic_top_band_content" name="classic_top_band_content" form="settingsForm"
                       onchange="document.getElementById('classicTopCustomWrap').style.display=this.value==='custom'?'block':'none'">
                 <option value="none" {{ 'selected' if classic_top_band_content == 'none' else '' }}>None</option>
-                <option value="status" {{ 'selected' if classic_top_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="status" {{ 'selected' if classic_top_band_content == 'status' else '' }}>Status (Now Showing / Coming Soon)</option>
                 <option value="date" {{ 'selected' if classic_top_band_content == 'date' else '' }}>Release date</option>
                 <option value="custom" {{ 'selected' if classic_top_band_content == 'custom' else '' }}>Custom text</option>
               </select>
@@ -607,7 +605,7 @@
               <select id="classic_bottom_band_content" name="classic_bottom_band_content" form="settingsForm"
                       onchange="document.getElementById('classicBottomCustomWrap').style.display=this.value==='custom'?'block':'none'">
                 <option value="none" {{ 'selected' if classic_bottom_band_content == 'none' else '' }}>None</option>
-                <option value="status" {{ 'selected' if classic_bottom_band_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="status" {{ 'selected' if classic_bottom_band_content == 'status' else '' }}>Status (Now Showing / Coming Soon)</option>
                 <option value="date" {{ 'selected' if classic_bottom_band_content == 'date' else '' }}>Release date</option>
                 <option value="custom" {{ 'selected' if classic_bottom_band_content == 'custom' else '' }}>Custom text</option>
               </select>
@@ -658,8 +656,7 @@
           </div>
 
           <div id="framedAppearance" style="display:none;">
-            <p class="note" style="margin:0 0 14px;">Poster scaled down and inset, with a status line above it and a
-              full cast/crew billing block below it, set in the same typeface real theatrical posters use.</p>
+            <p class="note" style="margin:0 0 14px;">A smaller poster with a status line above and cast/crew credits below, styled like a real movie poster.</p>
 
             <div class="field-group">
               <label for="framed_poster_position" class="field-label">Poster position</label>
@@ -681,7 +678,7 @@
               <select id="framed_top_content" name="framed_top_content" form="settingsForm"
                       onchange="document.getElementById('framedTopCustomWrap').style.display=this.value==='custom'?'block':'none'">
                 <option value="none" {{ 'selected' if framed_top_content == 'none' else '' }}>None</option>
-                <option value="status" {{ 'selected' if framed_top_content == 'status' else '' }}>Status (Now Showing / Upcoming)</option>
+                <option value="status" {{ 'selected' if framed_top_content == 'status' else '' }}>Status (Now Showing / Coming Soon)</option>
                 <option value="date" {{ 'selected' if framed_top_content == 'date' else '' }}>Release date</option>
                 <option value="custom" {{ 'selected' if framed_top_content == 'custom' else '' }}>Custom text</option>
               </select>
@@ -727,8 +724,7 @@
               {% elif framed_top_font_status == 'error' %}
               <div class="font-status error">Couldn't reach the font server - try again shortly</div>
               {% endif %}
-              <p class="note" style="margin:6px 0 0;">The billing block below the poster always uses the same
-                fixed typeface real posters use - only this status line is customizable.</p>
+              <p class="note" style="margin:6px 0 0;">Only this line's font can be changed &mdash; the credits below always match real posters.</p>
             </div>
           </div>
         </section>
@@ -742,9 +738,8 @@
                 <input type="number" id="hdmi_width" name="hdmi_width" min="100" max="8000" value="{{ hdmi_width|numfmt }}" placeholder="Width" form="settingsForm">
                 <input type="number" id="hdmi_height" name="hdmi_height" min="100" max="8000" value="{{ hdmi_height|numfmt }}" placeholder="Height" form="settingsForm">
               </div>
-              <p class="note" style="margin:6px 0 0;">The physical signal sent to the screen - normally its true
-                native resolution, so it looks sharp regardless of what the Pi renders at. Forcing the new mode
-                needs <code>sudo install.sh -y</code> run once after Save (see CLAUDE.md).</p>
+              <p class="note" style="margin:6px 0 0;">Your screen's real resolution, for the sharpest picture.
+                After Save, run <code>sudo install.sh -y</code> once over SSH to apply it.</p>
             </div>
 
             <div class="field-group">
@@ -755,13 +750,11 @@
               </div>
               <button type="button" class="primary" id="detectDisplayBtn" style="margin-top:10px;">Detect display</button>
               <div id="detectDisplayResult"></div>
-              <p class="note" style="margin:6px 0 0;">The canvas posters are actually composited/grained at, then
-                scaled by <code>fbi</code> to fill the HDMI output above - lower than the HDMI resolution is fine,
-                and keeps processing fast on weaker hardware. Detect display fills in both fields above from the
-                connected screen, capped to a safe render size if this Pi looks too weak to composite full-size -
-                still needs Save below to apply.</p>
+              <p class="note" style="margin:6px 0 0;">Lower than your screen's resolution is fine &mdash;
+                posters get scaled up to fit, and it keeps processing fast. "Detect display" fills in
+                good values automatically.</p>
             </div>
-            <p class="note" style="margin:0;">Most people never need this tab - it only matters once, when
+            <p class="note" style="margin:0;">Most people never need this &mdash; it only matters once, when
               first setting up a new screen.</p>
           </div>
         </details>
@@ -838,8 +831,11 @@
           <p class="panel-label">Schedule</p>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="schedule_enabled" {{ 'checked' if schedule_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="schedule_enabled" {{ 'checked' if schedule_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Turn the display off overnight</span>
             </label>
           </div>
@@ -855,8 +851,11 @@
           </div>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="reboot_enabled" {{ 'checked' if reboot_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="reboot_enabled" {{ 'checked' if reboot_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Reboot daily (housekeeping, not screen saving)</span>
             </label>
           </div>
@@ -873,8 +872,7 @@
             <label for="discovery_sync_time" class="field-label">Daily sync time</label>
             <input type="time" id="discovery_sync_time" name="discovery_sync_time" value="{{ discovery_sync_time }}" form="settingsForm">
             <p class="note" style="margin:8px 0 0;">
-              Applies to whichever discovery source is active &mdash; set on the
-              Discovery tab.
+              Applies to whichever source is active on the Discovery tab.
             </p>
           </div>
         </section>
@@ -886,9 +884,7 @@
         <section class="panel">
           <p class="panel-label">Active discovery source</p>
           <p class="note">
-            Only one source pulls posters at a time &mdash; scheduled and
-            manual syncs both check this, so the two can never fight over
-            the rotation. Takes effect after Save. Daily sync time is set on
+            Only one source can be active at a time. Sync time is set on
             the Schedule tab.
           </p>
           <div style="display:flex;gap:8px;">
@@ -909,8 +905,11 @@
           <p class="panel-label">Automatic cleanup</p>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="poster_expiry_enabled" {{ 'checked' if poster_expiry_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="poster_expiry_enabled" {{ 'checked' if poster_expiry_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Remove titles once they age out</span>
             </label>
           </div>
@@ -921,20 +920,19 @@
           </div>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="poster_expiry_include_pinned" {{ 'checked' if poster_expiry_include_pinned else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="poster_expiry_include_pinned" {{ 'checked' if poster_expiry_include_pinned else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Apply to pinned titles too</span>
             </label>
           </div>
 
           <p class="note" style="margin:12px 0 0;">
-            Counts from when a poster was actually added to your rotation, not
-            the movie's real release date &mdash; a trending-but-older title
-            gets the full number of days like anything else. Applies to
-            whichever source is active. TMDb has no "still in cinemas" flag,
-            so its own <em>now playing</em> list is used as the next best
-            thing either way: a title past the age limit but still showing in
-            cinemas is kept anyway. Your own uploads are never removed by this.
+            Counts from when a poster was added to your rotation, not its
+            release date. Titles still in cinemas get kept a bit longer.
+            Your own uploads are never removed.
           </p>
         </section>
 
@@ -947,9 +945,8 @@
         <section class="panel">
           <p class="panel-label">Trending on TMDb</p>
           <p class="note" style="margin-bottom:14px;">
-            Live results from TMDb's own trending / popular / now-playing lists
-            for the categories enabled below, filtered by your popularity
-            settings. Click a poster to pin it into the rotation right away.
+            What's trending on TMDb right now. Click a poster to add it to
+            your rotation.
           </p>
           <div class="discovery-status" id="tmdbPreviewStatus"></div>
           <div class="grid discovery-grid" id="tmdbPreviewGrid"></div>
@@ -962,8 +959,8 @@
         <section class="panel" style="margin-top:2px;">
           <p class="panel-label">Add by link</p>
           <p class="note">
-            Paste a TMDb URL to pin a specific title. Pinned posters stay put &mdash;
-            the automatic sync never removes them.
+            Paste a TMDb link to add a specific title. It stays in your
+            rotation permanently.
           </p>
           <form action="/tmdb-add-link" method="post">
             <input type="text" name="tmdb_url" placeholder="https://www.themoviedb.org/movie/550-fight-club" required>
@@ -975,15 +972,21 @@
           <p class="panel-label">TMDb automation</p>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="tmdb_enabled" {{ 'checked' if tmdb_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="tmdb_enabled" {{ 'checked' if tmdb_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Pull posters from TMDb</span>
             </label>
           </div>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="tmdb_schedule_enabled" {{ 'checked' if tmdb_schedule_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="tmdb_schedule_enabled" {{ 'checked' if tmdb_schedule_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Run automatically on a daily schedule</span>
             </label>
           </div>
@@ -1007,8 +1010,11 @@
           <div id="movieSources">
             <p class="panel-label" style="margin-top:24px;">Movie categories</p>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_movie_trending" {{ 'checked' if tmdb_sources.get('movie_trending') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_movie_trending" {{ 'checked' if tmdb_sources.get('movie_trending') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Trending this week</span>
               </label>
               <input type="number" name="limit_movie_trending" min="1" max="20" step="1"
@@ -1017,8 +1023,11 @@
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_movie_popular" {{ 'checked' if tmdb_sources.get('movie_popular') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_movie_popular" {{ 'checked' if tmdb_sources.get('movie_popular') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Popular now</span>
               </label>
               <input type="number" name="limit_movie_popular" min="1" max="20" step="1"
@@ -1027,8 +1036,11 @@
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_movie_now_playing" {{ 'checked' if tmdb_sources.get('movie_now_playing') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_movie_now_playing" {{ 'checked' if tmdb_sources.get('movie_now_playing') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>In cinemas now</span>
               </label>
               <input type="number" name="limit_movie_now_playing" min="1" max="20" step="1"
@@ -1037,8 +1049,11 @@
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_movie_upcoming" {{ 'checked' if tmdb_sources.get('movie_upcoming') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_movie_upcoming" {{ 'checked' if tmdb_sources.get('movie_upcoming') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Coming soon</span>
               </label>
               <input type="number" name="limit_movie_upcoming" min="1" max="20" step="1"
@@ -1051,8 +1066,11 @@
           <div id="tvSources">
             <p class="panel-label" style="margin-top:24px;">TV categories</p>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_tv_trending" {{ 'checked' if tmdb_sources.get('tv_trending') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_tv_trending" {{ 'checked' if tmdb_sources.get('tv_trending') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Trending this week</span>
               </label>
               <input type="number" name="limit_tv_trending" min="1" max="20" step="1"
@@ -1061,8 +1079,11 @@
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_tv_popular" {{ 'checked' if tmdb_sources.get('tv_popular') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_tv_popular" {{ 'checked' if tmdb_sources.get('tv_popular') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Popular now</span>
               </label>
               <input type="number" name="limit_tv_popular" min="1" max="20" step="1"
@@ -1071,8 +1092,11 @@
                      style="width:76px;flex-shrink:0;" form="settingsForm">
             </div>
             <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="checkbox" name="source_tv_on_the_air" {{ 'checked' if tmdb_sources.get('tv_on_the_air') else '' }} form="settingsForm">
+              <label class="switch-row" style="flex:1;">
+                <span class="switch">
+                  <input type="checkbox" name="source_tv_on_the_air" {{ 'checked' if tmdb_sources.get('tv_on_the_air') else '' }} form="settingsForm">
+                  <span class="switch-track"></span>
+                </span>
                 <span>Currently airing</span>
               </label>
               <input type="number" name="limit_tv_on_the_air" min="1" max="20" step="1"
@@ -1083,9 +1107,7 @@
           </div>
 
           <p class="note" style="margin:18px 0 0;">
-            The number beside each category is how many posters to take from it.
-            A title appearing in two categories is only added once, so the rotation
-            can end up smaller than the totals suggest.
+            The number beside each category is how many posters to pull from it.
           </p>
         </section>
 
@@ -1096,8 +1118,7 @@
               <label for="tmdb_min_popularity" class="field-label">Minimum popularity &mdash; released titles</label>
               <input type="number" id="tmdb_min_popularity" name="tmdb_min_popularity" min="0" max="2000" step="5" value="{{ tmdb_min_popularity|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
-                Applies to everything except Coming soon. Filters out limited and
-                arthouse cinema runs. Around 30&ndash;50 works well. Use 0 for no filter.
+                Filters out obscure titles. 30&ndash;50 works well. Use 0 for no filter.
               </p>
             </div>
 
@@ -1105,10 +1126,8 @@
               <label for="tmdb_min_popularity_upcoming" class="field-label">Minimum popularity &mdash; coming soon</label>
               <input type="number" id="tmdb_min_popularity_upcoming" name="tmdb_min_popularity_upcoming" min="0" max="2000" step="1" value="{{ tmdb_min_popularity_upcoming|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
-                Kept separate because unreleased films score far lower &mdash; popularity
-                tracks current attention, and a film nobody can watch yet has little
-                of it however big it will be. Even the year's biggest titles sit in
-                the low tens, so keep this around 8&ndash;15.
+                Unreleased films score much lower than released ones, so this
+                needs a smaller number. 8&ndash;15 works well.
               </p>
             </div>
 
@@ -1116,14 +1135,12 @@
               <label for="tmdb_upcoming_months" class="field-label">Coming soon window (months)</label>
               <input type="number" id="tmdb_upcoming_months" name="tmdb_upcoming_months" min="1" max="36" step="1" value="{{ tmdb_upcoming_months|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
-                How far ahead "Coming soon" looks. TMDb's own upcoming list only spans
-                a few weeks, which is why major releases months away never showed up.
+                How many months ahead to look for upcoming releases.
               </p>
             </div>
 
             <p class="note" style="margin:0;">
-              Titles in more than one category are only added once. Region filtering
-              applies to movies only &mdash; TMDb has no regional popularity for TV.
+              Region filtering applies to movies only, not TV.
             </p>
           </div>
         </details>
@@ -1147,8 +1164,8 @@
         <section class="panel">
           <p class="panel-label">Trending on JustWatch</p>
           <p class="note" style="margin-bottom:14px;">
-            Live results from JustWatch's Popular movies list, filtered to titles
-            released this year. Click a poster to pin it into the rotation right away.
+            What's popular on JustWatch this year. Click a poster to add it
+            to your rotation.
           </p>
           <div class="discovery-status" id="justwatchPreviewStatus"></div>
           <div class="grid discovery-grid" id="justwatchPreviewGrid"></div>
@@ -1162,15 +1179,21 @@
           <p class="panel-label">JustWatch automation</p>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="justwatch_enabled" {{ 'checked' if justwatch_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="justwatch_enabled" {{ 'checked' if justwatch_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Pull posters from JustWatch</span>
             </label>
           </div>
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="justwatch_schedule_enabled" {{ 'checked' if justwatch_schedule_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="justwatch_schedule_enabled" {{ 'checked' if justwatch_schedule_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Run automatically on a daily schedule</span>
             </label>
           </div>
@@ -1181,12 +1204,8 @@
           </div>
 
           <p class="note" style="margin:12px 0 0;">
-            Pulls from justwatch.com's Popular movies list, filtered to titles
-            released this year &mdash; recalculated on every sync, so it moves
-            on to next year's releases on its own once the year turns over,
-            no manual update needed. JustWatch supplies the ranking only:
-            poster art and credits still come from TMDb, matched by title and
-            release year.
+            Pulls this year's popular movies from JustWatch. Moves on to
+            next year's releases automatically once the year changes.
           </p>
         </section>
 
@@ -1212,9 +1231,8 @@
         <section class="panel">
           <p class="panel-label">Now Playing</p>
           <p class="note">
-            While your Plex account is playing a movie or episode on this
-            server, the frame temporarily shows that title's poster with a
-            "NOW PLAYING" label instead of its normal rotation.
+            Shows what you're currently watching on Plex instead of the
+            normal rotation.
           </p>
 
           <div id="plexConnectResult">
@@ -1240,8 +1258,11 @@
           <input type="hidden" name="_plex_form" value="1" form="settingsForm">
 
           <div class="field-group">
-            <label class="checkbox-row">
-              <input type="checkbox" name="plex_enabled" {{ 'checked' if plex_enabled else '' }} form="settingsForm">
+            <label class="switch-row">
+              <span class="switch">
+                <input type="checkbox" name="plex_enabled" {{ 'checked' if plex_enabled else '' }} form="settingsForm">
+                <span class="switch-track"></span>
+              </span>
               <span>Show Now Playing overrides</span>
             </label>
           </div>
@@ -1255,8 +1276,7 @@
               {% endfor %}
             </select>
             <div id="plexUserSelectResult"></div>
-            <p class="note" style="margin:6px 0 0;">Multiple profiles found on this Plex Home - only this one's
-              playback drives Now Playing, so other people using the same server don't cause conflicts.</p>
+            <p class="note" style="margin:6px 0 0;">Only this profile's playback will show on the frame.</p>
           </div>
           {% endif %}
         </section>
@@ -1274,9 +1294,8 @@
               <label for="plex_stop_delay_seconds" class="field-label">Wait before reverting (seconds)</label>
               <input type="number" id="plex_stop_delay_seconds" name="plex_stop_delay_seconds" min="0" max="600" step="5"
                      value="{{ plex_stop_delay_seconds|numfmt }}" form="settingsForm">
-              <p class="note" style="margin:6px 0 0;">How long playback has to genuinely stop before the frame
-                switches back to normal rotation &mdash; bridges brief pauses and gaps between episodes so
-                Now Playing doesn't flicker off and back on. 0 reverts immediately.</p>
+              <p class="note" style="margin:6px 0 0;">Avoids flickering back to normal rotation during a pause
+                or between episodes. 0 switches back instantly.</p>
             </div>
 
             <div class="field-group">
@@ -1287,8 +1306,7 @@
                 <option value="none" {{ 'selected' if classic_plex_band == 'none' else '' }}>None (poster only)</option>
               </select>
               <p class="note" style="margin-top:8px;margin-bottom:0;">
-                Forces this band to say "NOW PLAYING" while active. The other
-                band keeps showing whatever it's normally set to.
+                The other band keeps showing its normal content.
               </p>
             </div>
           </div>
@@ -1302,9 +1320,7 @@
         <section class="panel">
           <p class="panel-label">Live logs</p>
           <p class="note">
-            What's actually happening in the background right now - the display
-            loop, the Plex "now playing" poller, TMDb sync runs, and the last
-            software update. Only updates while this tab is open.
+            See what's happening in the background right now.
           </p>
           <div class="log-toolbar">
             <select id="logSourceSelect">
@@ -1312,8 +1328,11 @@
               <option value="{{ key }}">{{ label }}</option>
               {% endfor %}
             </select>
-            <label class="checkbox-row" style="margin:0;">
-              <input type="checkbox" id="logAutoScroll" checked>
+            <label class="switch-row" style="margin:0;">
+              <span class="switch">
+                <input type="checkbox" id="logAutoScroll" checked>
+                <span class="switch-track"></span>
+              </span>
               Auto-scroll
             </label>
             <span class="log-status" id="logStatus"></span>
@@ -1371,9 +1390,8 @@
         <section class="panel">
           <p class="panel-label">Power</p>
           <p class="note">
-            Pulling the plug while the Pi is running risks corrupting the SD card.
-            Shut down here first, wait for the green activity LED to stop flickering,
-            then it's safe to cut power.
+            Never just pull the plug &mdash; it can corrupt the SD card.
+            Shut down here first and wait for the light to stop blinking.
           </p>
 
           <form action="/power/restart-display" method="post">
@@ -1989,10 +2007,8 @@
         const latest = describeCommit(data.remote_version, data.remote_title, data.remote_message, data.remote_sha);
         let html = '<p class="flash ok">'+data.behind+' update(s) available &mdash; latest: '+latest+'</p>';
         if(data.system_changes){
-          html += '<p class="note">This update also changes system files (systemd/install.sh) - '
-            +'updating here will re-run <code>install.sh</code> automatically, so it may take '
-            +'longer. It won’t reboot on its own; if it changes boot console settings, reboot '
-            +'from the Power tab below when convenient.</p>';
+          html += '<p class="note">This one also updates system files, so it will take longer. '
+            +'You may need to reboot afterward from the Power tab.</p>';
         }
         html += '<p class="flash warn">Once started, do not power off or unplug the frame - '
           +'estimated time: '+estimateRangeText(pendingSystemChanges)+'.</p>';
