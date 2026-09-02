@@ -1522,6 +1522,15 @@ def update_now():
     if lock_fd is not None:
         try:
             with open(UPDATE_LOG, "w") as log_file:
+                subprocess_env = os.environ.copy()
+                # Hands the already-held lock straight to update.sh via the
+                # inherited fd (pass_fds) instead of letting go of it here -
+                # see update.sh's own use of POSTERFRAME_LOCK_FD for why.
+                # Closing lock_fd below still happens immediately either
+                # way; it's safe precisely because the child now holds its
+                # own reference to the same open file description, so the
+                # underlying flock stays held until update.sh itself exits.
+                subprocess_env["POSTERFRAME_LOCK_FD"] = str(lock_fd)
                 subprocess.Popen(
                     # 900s not 600s: a system-file update also runs install.sh
                     # (apt + pip), which needs more room than a code-only pull.
@@ -1529,11 +1538,23 @@ def update_now():
                     cwd=BASE_DIR,
                     stdout=log_file, stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    pass_fds=(lock_fd,),
+                    env=subprocess_env,
                 )
         finally:
-            # Released only after the truncate+spawn above has fully
-            # happened - update.sh will take its own fresh lock moments
-            # later once its own script execution reaches that point.
+            # This closes only *our* reference. It used to be the moment
+            # the lock was actually released - and Popen() returning is no
+            # guarantee update.sh has reached its own locking code yet, so
+            # a second /update request landing in that gap would sail
+            # through this same acquire_update_lock() call, spawn its own
+            # update.sh, and the two would only then race for the real OS
+            # lock - the loser logging "An update is already in progress."
+            # into update.log right after its own request handler had just
+            # freshly truncated that file, burying the winner's actual
+            # output. pass_fds above keeps a second reference to the same
+            # open file description alive in the child the whole time, so
+            # closing ours here no longer releases anything - the lock
+            # stays held continuously with no gap at all.
             os.close(lock_fd)
 
     # Best-effort peek at whether this pull also touches system files, just

@@ -51,8 +51,26 @@ export GIT_TERMINAL_PROMPT=0
 export GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"
 
 LOCK_FILE="$(pwd)/.update.lock"
-exec 200>"$LOCK_FILE"
-if ! flock -n 200; then
+if [[ -n "${POSTERFRAME_LOCK_FD:-}" ]]; then
+    # app.py already opened and flocked this file before spawning us, and
+    # kept that exact fd open across exec (pass_fds) specifically so there
+    # is no gap between it letting go and this script taking its own lock -
+    # Popen() returning is not proof this script has reached this line yet,
+    # and that narrow gap used to be enough for a double-click "Update now"
+    # to spawn a second one of these, which then raced this same file for
+    # real: the loser landed here, logged the message below, and that
+    # became the only thing in update.log because ITS OWN request handler
+    # had just freshly truncated it - burying the winner's actual output.
+    # Re-flock the SAME inherited fd (not a fresh open of the file) rather
+    # than the file path below - trivially succeeds since we already hold
+    # it via the parent, which keeps the "someone else has it" check
+    # below in one place rather than a separate branch.
+    LOCK_FD="$POSTERFRAME_LOCK_FD"
+else
+    exec 200>"$LOCK_FILE"
+    LOCK_FD=200
+fi
+if ! flock -n "$LOCK_FD"; then
     log "An update is already in progress." >&2
     exit 1
 fi
