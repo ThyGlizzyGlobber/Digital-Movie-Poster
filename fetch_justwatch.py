@@ -235,7 +235,7 @@ def main():
         log("JustWatch integration is disabled in the web UI - skipping.")
         return
 
-    if config.get("discovery_source", "tmdb") != "justwatch":
+    if config.get("discovery_source", "justwatch") != "justwatch":
         log("JustWatch is not the active discovery source - skipping.")
         return
 

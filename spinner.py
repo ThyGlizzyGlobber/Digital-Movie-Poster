@@ -14,6 +14,7 @@ web UI rather than by editing this file.
 import json
 import math
 import os
+import signal
 import sys
 import time
 
@@ -177,7 +178,18 @@ def make_frame(active_index, diameter):
     return img
 
 
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main():
+    # systemctl stop sends SIGTERM, not SIGINT - without this, the
+    # `except KeyboardInterrupt: ... finally: fb.close()` below only ever
+    # ran on a manual Ctrl-C, never on the actual `systemctl stop
+    # posterframe-spinner` path stop_spinner() uses, silently skipping the
+    # framebuffer fd close on every real shutdown.
+    signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+
     settings = load_settings()
 
     try:

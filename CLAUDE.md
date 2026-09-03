@@ -12,7 +12,11 @@ If you add a feature, add its controls to the UI.
 
 ## Hardware
 
-- Raspberry Pi Zero W (single-core ARMv6, 512MB) — slow; performance matters
+- **Raspberry Pi 4** is the recommended/production target. A **Pi Zero W**
+  (single-core ARMv6, 512MB) still works — the whole pipeline was originally
+  built and tuned against one, so nothing here assumes a Pi 4 — but it's slow
+  (e.g. the ~13s/poster grain pipeline, 90s boot) and no longer recommended
+  for a production install.
 - Raspberry Pi OS **Lite** (32-bit), Bookworm-era, **headless, no desktop**
 - Display over HDMI. Currently a test monitor; the eventual target is a ~40–43"
   TV in **portrait** (≈900mm tall)
@@ -318,19 +322,3 @@ save, power controls, in-UI code updates ("Update now") with a live
 progress bar through the restart/reconnect cycle, Plex "Now Playing"
 overrides (PIN sign-in, dedicated band independent of the normal top/bottom
 content settings).
-
-### Open items
-1. **Trailer playback.** The goal is trailer on top, poster below, no gap. Not
-   feasible on a Zero W or on a bare framebuffer — needs a **Pi 5** and a
-   browser kiosk, where the layout is trivial CSS. This would replace
-   `slideshow.py` and `spinner.py` entirely; the web UI, TMDb sync, grain
-   pipeline and config all survive unchanged. Note TMDb only supplies YouTube
-   IDs, not video files, so sourcing is unsolved.
-2. **Pi 5 migration.** Fixes the 90s boot, ~13s/poster grain, and sync timeouts.
-   Caveat: Pi 5 has **no H.264 hardware decoder** (HEVC only), but its CPU
-   software-decodes H.264 faster than the Pi 4's hardware could, without the
-   1080p cap.
-3. **Final panel + frame.** ~900mm portrait ≈ 40–43" 16:9. Avoid OLED — static
-   posters for 15min at a time is a burn-in worst case. Set **Display
-   resolution** in the UI to match, and **Working width** to the screen's short
-   edge.

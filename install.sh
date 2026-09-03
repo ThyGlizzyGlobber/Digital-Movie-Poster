@@ -92,6 +92,14 @@ as_user() {
     if [[ "$AS_ROOT" == "1" ]]; then sudo -u "$RUN_USER" -H "$@"; else "$@"; fi
 }
 
+# Escapes a value for safe use on the REPLACEMENT side of a sed s/// (or
+# s|||) command - & means "whole match" and \N means "backreference N"
+# there, so a checkout path containing either would otherwise corrupt
+# whatever this gets substituted into instead of erroring loudly.
+sed_escape_repl() {
+    printf '%s' "$1" | sed -e 's/[&\]/\\&/g'
+}
+
 if [[ "$(uname -s)" != "Linux" ]] || [[ ! -e /proc/device-tree/model ]]; then
     warn "This doesn't look like a Raspberry Pi. install.sh edits system files"
     warn "(sudoers, systemd units, /boot/firmware/cmdline.txt) that only make"
@@ -156,9 +164,11 @@ chmod 600 "$BASE_DIR/.env"
 # systemd units - copy the checked-in templates, substituting placeholders
 # ---------------------------------------------------------------------------
 log "Installing systemd units"
+escaped_base_dir="$(sed_escape_repl "$BASE_DIR")"
+escaped_run_user="$(sed_escape_repl "$RUN_USER")"
 for unit in "$BASE_DIR"/systemd/*; do
     name="$(basename "$unit")"
-    sed -e "s|__DIR__|$BASE_DIR|g" -e "s|__USER__|$RUN_USER|g" \
+    sed -e "s|__DIR__|$escaped_base_dir|g" -e "s|__USER__|$escaped_run_user|g" \
         "$unit" | priv tee "/etc/systemd/system/$name" > /dev/null
 done
 
@@ -283,8 +293,16 @@ done
 if [[ -z "$CONFIG_TXT" ]]; then
     warn "Couldn't find config.txt (checked /boot/firmware and /boot) - skipping"
     warn "hdmi_force_hotplug. A slow-to-wake TV may still fall back to a safe mode."
-elif grep -q '^hdmi_force_hotplug=' "$CONFIG_TXT"; then
+elif grep -q '^hdmi_force_hotplug=1' "$CONFIG_TXT"; then
     log "hdmi_force_hotplug already set ($CONFIG_TXT)"
+elif grep -q '^hdmi_force_hotplug=' "$CONFIG_TXT"; then
+    # A line already exists but with some other value (hand-edited, or left
+    # over from an older config) - correct it in place rather than treating
+    # any existing line as good enough, which used to permanently skip this
+    # fix on every future re-run once a stale =0 (or similar) line existed.
+    log "Correcting existing hdmi_force_hotplug line ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    priv sed -i 's/^hdmi_force_hotplug=.*/hdmi_force_hotplug=1/' "$CONFIG_TXT"
 else
     log "Forcing HDMI hotplug detection ($CONFIG_TXT)"
     [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
@@ -295,10 +313,14 @@ else
     } | priv tee -a "$CONFIG_TXT" > /dev/null
 fi
 
-HDMI_RES="$(python3 -c "
-import json
+# BASE_DIR travels in via an env var, not interpolated into the Python
+# source string below - a checkout path containing a single quote would
+# otherwise break out of the '$BASE_DIR/config.json' literal and abort the
+# whole script (set -e) partway through applying system changes.
+HDMI_RES="$(BASE_DIR_FOR_PY="$BASE_DIR" python3 -c "
+import json, os
 try:
-    c = json.load(open('$BASE_DIR/config.json'))
+    c = json.load(open(os.path.join(os.environ['BASE_DIR_FOR_PY'], 'config.json')))
 except Exception:
     c = {}
 # Unswapped, deliberately: hdmi_width/height is the panel's own native EDID

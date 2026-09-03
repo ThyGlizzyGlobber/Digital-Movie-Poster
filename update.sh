@@ -122,6 +122,18 @@ if [[ "$ahead" != "0" ]]; then
     exit 1
 fi
 
+# ahead=0 only means "no local commits" - a tracked file hand-edited over SSH
+# but never committed wouldn't show up there, and git merge --ff-only doesn't
+# refuse a dirty tree on its own unless the incoming pull actually conflicts
+# with the uncommitted lines. Left unchecked, a non-conflicting pull would
+# silently fold the uncommitted edit into the merge result, contradicting the
+# "never silently discards work" guarantee documented above.
+if ! git diff --quiet HEAD --; then
+    log "Local working tree has uncommitted changes - not auto-merging." >&2
+    log "Resolve this by hand over SSH (e.g. git status / git stash / git commit)." >&2
+    exit 1
+fi
+
 log "Pulling $behind commit(s) from $upstream"
 before_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
 git merge --ff-only "$upstream"

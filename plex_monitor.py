@@ -184,7 +184,22 @@ def deactivate():
 
 
 def main():
-    current_session_key = None
+    # current_session_key/stopped_since live only in this process's memory,
+    # but plex_now_playing.active in config.json survives a restart (e.g.
+    # "Update now" restarts this service on every code update). Without this
+    # seed, a restart during an already-active override would come back up
+    # with current_session_key=None, and the "stopped" branch below requires
+    # current_session_key to be truthy to fire - so if playback had in fact
+    # ended in that window, nothing would ever notice and the override would
+    # stay stuck on until a brand-new session starts. The sentinel is never a
+    # real Plex sessionKey, so if playback is actually still going the normal
+    # "new session" branch fires instead and just re-syncs harmlessly.
+    startup_config = load_config()
+    current_session_key = (
+        "restored-on-startup"
+        if startup_config.get("plex_now_playing", {}).get("active")
+        else None
+    )
     # Set the moment a poll first finds no session while one was previously
     # active - not acted on immediately. Plex can report a brief gap between
     # episodes in a show, or a short pause, as "nothing playing" for one or

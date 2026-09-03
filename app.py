@@ -28,6 +28,12 @@ import fetch_posters
 import fetch_justwatch
 
 app = Flask(__name__)
+# Generous but bounded: TMDb "original" posters and manual uploads are a few
+# MB at most. This exists to stop a runaway or malicious upload from
+# exhausting memory during decode+grain (which allocates multiple full-res
+# float32 arrays), not to constrain normal use - Flask rejects anything over
+# this with a 413 before the request body is even fully read.
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 
 @app.template_filter("numfmt")
@@ -442,7 +448,7 @@ def load_config():
         "tmdb_min_popularity": 0,
         "tmdb_min_popularity_upcoming": 10,
         "tmdb_upcoming_months": 12,
-        "discovery_source": "tmdb",
+        "discovery_source": "justwatch",
         "discovery_sync_time": "04:00",
         "justwatch_enabled": False,
         "justwatch_schedule_enabled": True,
@@ -479,6 +485,17 @@ def load_config():
     # old value straight across without swapping it back would silently
     # force the wrong (often unsupported) orientation for any existing
     # install with rotation_degrees set to 90/270.
+    # The TMDb/JustWatch discovery-source picker was removed from the UI -
+    # JustWatch is the only supported discovery source now (TMDb is still
+    # used to fetch each poster's actual image/credits/digital-release date,
+    # just no longer as a selectable trending-list source). Force any
+    # existing install still holding the old "tmdb" value over to
+    # "justwatch" rather than leaving it stuck on a source nothing can
+    # switch away from anymore.
+    if config.get("discovery_source") == "tmdb":
+        config["discovery_source"] = "justwatch"
+        changed = True
+
     if "hdmi_width" not in config or "hdmi_height" not in config:
         display_width = config.get("display_width", 1080)
         display_height = config.get("display_height", 1920)
@@ -632,12 +649,18 @@ def describe_poster(filename, meta):
         except (ValueError, TypeError):
             status = "none"
 
+    try:
+        mtime = int(os.path.getmtime(os.path.join(POSTER_DIR, filename)))
+    except OSError:
+        mtime = 0
+
     return {
         "filename": filename,
         "kind": kind,
         "status": status,
         "title": info.get("title") or "",
         "release_date": raw_date or "",
+        "mtime": mtime,
     }
 
 
@@ -709,6 +732,18 @@ def index():
     display_height = config.get("display_height", 1920)
     hdmi_width = config.get("hdmi_width", display_width)
     hdmi_height = config.get("hdmi_height", display_height)
+    # The "Poster render resolution" fields are shown to the user in the
+    # same traditional (native/unrotated) orientation as HDMI output
+    # resolution, regardless of rotation - this is presentation only, so a
+    # screen's spec sheet numbers (e.g. 3840x2160) can be typed in the same
+    # way in both places. What's actually stored in display_width/height
+    # stays in the pre-rotation-swapped convention slideshow.py and
+    # install.sh depend on; save_settings() swaps back into that
+    # convention on save.
+    if rotation_degrees in (90, 270):
+        poster_render_width, poster_render_height = display_height, display_width
+    else:
+        poster_render_width, poster_render_height = display_width, display_height
     classic_display_font = classic.get("display_font", {})
     framed_top_font = framed.get("top_font", {})
     grain_intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
@@ -799,6 +834,8 @@ def index():
         display_height=display_height,
         hdmi_width=hdmi_width,
         hdmi_height=hdmi_height,
+        poster_render_width=poster_render_width,
+        poster_render_height=poster_render_height,
         grain_intensity=grain_intensity,
         grain_enabled=grain_enabled,
         tmdb_enabled=tmdb_enabled,
@@ -844,6 +881,7 @@ def index():
         plex_home_users=plex_home_users,
         classic_plex_band=classic_plex_band,
         plex_connected=plex_connected,
+        regrain_failed=request.args.get("regrain_failed", type=int),
     )
 
 
@@ -860,15 +898,37 @@ def upload():
 
     filename = secure_filename(file.filename)
 
-    image = Image.open(file.stream)
-    image.load()
+    try:
+        image = Image.open(file.stream)
+        image.load()
+    except Exception as e:
+        print(f"Could not read uploaded poster: {e}")
+        return redirect(url_for("index"))
 
     # Originals are kept at full resolution so raising the working width
     # later just needs a re-grain, not a re-download.
-    image.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
+    original_path = os.path.join(ORIGINAL_DIR, filename)
+    image.convert("RGB").save(original_path)
 
-    prepare_poster(image, intensity, max_width, grain_enabled).save(os.path.join(POSTER_DIR, filename))
+    try:
+        prepare_poster(image, intensity, max_width, grain_enabled).save(os.path.join(POSTER_DIR, filename))
+    except Exception as e:
+        # Don't leave the original behind with nothing tracking it - a
+        # failure here (disk full, unexpected image mode) used to leave this
+        # file permanently orphaned, since it's only ever added to
+        # config["order"] after this step succeeds.
+        print(f"Could not process uploaded poster: {e}")
+        try:
+            os.remove(original_path)
+        except OSError:
+            pass
+        return redirect(url_for("index"))
 
+    # Reload right before mutating shared state: decode+grain above can take
+    # well over the 3s slideshow poll interval on slow hardware, and writing
+    # back the config object loaded at the top of this request would silently
+    # revert any settings save/reorder/delete that completed in that window.
+    config = load_config()
     if filename not in config["order"]:
         config["order"].append(filename)
     save_config(config)
@@ -890,6 +950,7 @@ def regrain():
     save_config(config)
 
     reprocessed = 0
+    failed = []
     for filename in os.listdir(ORIGINAL_DIR):
         original_path = os.path.join(ORIGINAL_DIR, filename)
         if not os.path.isfile(original_path):
@@ -904,9 +965,15 @@ def regrain():
             reprocessed += 1
         except Exception as e:
             print(f"Failed to regrain {filename}: {e}")
+            failed.append(filename)
 
     print(f"Reprocessed {reprocessed} poster(s), grain {'on' if grain_enabled else 'off'} (intensity {intensity})")
 
+    # A poster that fails here keeps whatever grain it had before, silently
+    # out of sync with the settings just saved - print() alone only reaches
+    # journald, nothing in the UI would ever show this happened otherwise.
+    if failed:
+        return redirect(url_for("index", regrain_failed=len(failed)))
     return redirect(url_for("index"))
 
 
@@ -1032,10 +1099,11 @@ def justwatch_sync_now():
     config = load_config()
     if not config.get("justwatch_enabled", False):
         return redirect(url_for("index"))
-    # Only the currently-selected source can pull, so a stale JustWatch tab
-    # left open after switching back to TMDb can't kick off a sync that
-    # would just fight the TMDb one over the rotation.
-    if config.get("discovery_source", "tmdb") != "justwatch":
+    # discovery_source is always "justwatch" now (see load_config()'s
+    # migration) - this is just a defensive leftover from when TMDb and
+    # JustWatch could be switched between, in case an old config.json is
+    # ever restored by hand without going through that migration.
+    if config.get("discovery_source", "justwatch") != "justwatch":
         return redirect(url_for("index"))
 
     api_key = load_env_file(ENV_PATH).get("TMDB_API_KEY", "")
@@ -1249,6 +1317,12 @@ def pin_tmdb_title(media, item_id):
         fetch_posters.fetch_digital_release_date(item_id, api_key=api_key) if media == "movie" else None
     )
 
+    # Reload right before mutating shared state: everything above this point
+    # can take several seconds (two-plus TMDb round-trips, credits, digital-
+    # release lookup, image decode/grain) - writing back the config object
+    # loaded at the top of this function would silently revert any settings
+    # save/reorder/delete that completed while this was in flight.
+    config = load_config()
     if filename not in config["order"]:
         config["order"].append(filename)
     meta = {"release_date": released, "title": title, "added_date": date.today().isoformat()}
@@ -1294,7 +1368,12 @@ def discovery_pin():
     data = request.get_json(silent=True) or {}
     media = data.get("media")
     item_id = data.get("id")
-    if media not in ("movie", "tv") or not item_id:
+    # id ends up embedded straight into a TMDb request URL and a
+    # tmdbpin_<media>_<id>.jpg filename below - the TMDb detail lookup
+    # would 404 on anything non-numeric before either of those matters
+    # today, but requiring digits here directly means that stays true even
+    # if this function's TMDb call path ever changes.
+    if media not in ("movie", "tv") or not re.fullmatch(r"\d+", str(item_id or "")):
         return jsonify({"ok": False, "error": "Invalid title"}), 400
 
     try:
@@ -2064,17 +2143,14 @@ def detect_display():
         render_width, render_height = round(width * scale), round(height * scale)
     capped = (render_width, render_height) != (width, height)
 
-    # display_width/height (the render canvas) follows the OPPOSITE
-    # convention from hdmi_width/height: it's pre-rotation, swapped relative
-    # to the panel's native orientation when rotation_degrees is 90/270 -
-    # see the migration in load_config() for why (verified against the
-    # original working setup). width/height above are the panel's raw
-    # native EDID reading and go to hdmi_width/height unswapped; only this
-    # response's render_width/render_height (bound for display_width/height)
-    # need the swap applied here.
-    rotation_degrees = load_config().get("rotation_degrees")
-    if rotation_degrees in (90, 270):
-        render_width, render_height = render_height, render_width
+    # render_width/render_height stay in the same native/traditional
+    # orientation as width/height above (and as hdmi_width/height) - the
+    # "Poster render resolution" fields these fill in are deliberately
+    # presented to the user in that same traditional orientation regardless
+    # of rotation, same as a screen's spec sheet. The swap into
+    # display_width/height's actual storage convention (pre-rotation,
+    # swapped when rotation_degrees is 90/270 - see load_config()'s
+    # migration) happens only in save_settings(), not here.
 
     return jsonify({
         "ok": True,
@@ -2147,13 +2223,23 @@ def settings():
     if saturation_pct is not None:
         config["saturation"] = max(0.0, min(2.0, saturation_pct / 100))
 
-    width = request.form.get("display_width", type=int)
-    if width is not None and 100 <= width <= 8000:
-        config["display_width"] = width
-
-    height = request.form.get("display_height", type=int)
-    if height is not None and 100 <= height <= 8000:
-        config["display_height"] = height
+    poster_render_width = request.form.get("poster_render_width", type=int)
+    poster_render_height = request.form.get("poster_render_height", type=int)
+    if (poster_render_width is not None and poster_render_height is not None
+            and 100 <= poster_render_width <= 8000 and 100 <= poster_render_height <= 8000):
+        # The form always presents/accepts this pair in traditional (native,
+        # unrotated) orientation, same as HDMI output resolution, regardless
+        # of rotation - see the matching comment in index(). Swap back into
+        # display_width/height's actual pre-rotation-swapped storage
+        # convention here, using rotation_degrees as just set above (not
+        # the old stored value) so a rotation change in this same save is
+        # honored immediately rather than one save behind.
+        if config.get("rotation_degrees") in (90, 270):
+            config["display_width"] = poster_render_height
+            config["display_height"] = poster_render_width
+        else:
+            config["display_width"] = poster_render_width
+            config["display_height"] = poster_render_height
 
     hdmi_width = request.form.get("hdmi_width", type=int)
     if hdmi_width is not None and 100 <= hdmi_width <= 8000:
@@ -2296,10 +2382,9 @@ def settings():
             config["tmdb_upcoming_months"] = max(1, min(36, months))
 
     if request.form.get("_justwatch_form") == "1":
-        source = request.form.get("discovery_source")
-        if source in ("tmdb", "justwatch"):
-            config["discovery_source"] = source
-
+        # discovery_source itself is no longer user-settable - JustWatch is
+        # the only discovery source (see the migration in load_config()) -
+        # so there's no form field to read here anymore.
         sync_time = request.form.get("discovery_sync_time", "").strip()
         if TIME_RE.match(sync_time):
             config["discovery_sync_time"] = sync_time

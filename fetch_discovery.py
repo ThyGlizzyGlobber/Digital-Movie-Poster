@@ -37,8 +37,23 @@ def load_config():
 
 
 def active_source(config):
-    source = config.get("discovery_source", "tmdb")
-    return source if source in ("tmdb", "justwatch") else "tmdb"
+    # "tmdb" is still a recognized value here (the underlying fetch_posters.py
+    # sync still exists and works if ever hand-selected in config.json), but
+    # the web UI no longer offers a way to choose it - JustWatch is the only
+    # discovery source selectable there, and app.py's load_config() migrates
+    # any existing "tmdb" value over to "justwatch" on load.
+    source = config.get("discovery_source", "justwatch")
+    return source if source in ("tmdb", "justwatch") else "justwatch"
+
+
+def source_enabled(config, source):
+    # Matches each script's own internal check (fetch_posters.py/
+    # fetch_justwatch.py no-op immediately if their _enabled flag is off) -
+    # duplicated here so this file can decide *before* stamping today as
+    # done, not just before running the subprocess.
+    if source == "justwatch":
+        return config.get("justwatch_enabled", False)
+    return config.get("tmdb_enabled", True)
 
 
 def parse_target_time(value):
@@ -74,13 +89,21 @@ def main():
     if already_ran_today():
         return 0
 
+    source = active_source(config)
+    if not source_enabled(config, source):
+        # The active source is currently switched off - the child script
+        # would just no-op immediately, so there's no slow work to guard
+        # against overlapping and nothing to gain by stamping today as done.
+        # Leaving the stamp unwritten means flipping it back on later today
+        # still gets a same-day sync instead of waiting until tomorrow.
+        return 0
+
     # Marked before running, not after: a sync can take a while (image
     # downloads, TMDb lookups), and this file is checked again every 5
     # minutes - without this, a slow run risks a second overlapping
     # invocation starting before the first one finishes.
     mark_ran_today()
 
-    source = active_source(config)
     script = "fetch_justwatch.py" if source == "justwatch" else "fetch_posters.py"
     log_path = os.path.join(BASE_DIR, f"{source}_sync.log")
 

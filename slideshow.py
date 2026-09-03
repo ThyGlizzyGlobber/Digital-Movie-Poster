@@ -339,24 +339,33 @@ def build_display_list(order, poster_meta, rotation_degrees, brightness, contras
             paths.append(out_path)
             continue
 
-        canvas = build_composited_poster(
-            source_path, meta, display_w, display_h, text_rgb, band_bg_rgb,
-            position, top_content, bottom_content, top_custom_text,
-            bottom_custom_text, text_size_pct, font_info,
-        )
+        try:
+            canvas = build_composited_poster(
+                source_path, meta, display_w, display_h, text_rgb, band_bg_rgb,
+                position, top_content, bottom_content, top_custom_text,
+                bottom_custom_text, text_size_pct, font_info,
+            )
 
-        transpose_method = ROTATION_MAP.get(rotation_degrees)
-        if transpose_method is not None:
-            canvas = canvas.transpose(transpose_method)
+            transpose_method = ROTATION_MAP.get(rotation_degrees)
+            if transpose_method is not None:
+                canvas = canvas.transpose(transpose_method)
 
-        if brightness != 1.0:
-            canvas = ImageEnhance.Brightness(canvas).enhance(brightness)
-        if contrast != 1.0:
-            canvas = ImageEnhance.Contrast(canvas).enhance(contrast)
-        if saturation != 1.0:
-            canvas = ImageEnhance.Color(canvas).enhance(saturation)
+            if brightness != 1.0:
+                canvas = ImageEnhance.Brightness(canvas).enhance(brightness)
+            if contrast != 1.0:
+                canvas = ImageEnhance.Contrast(canvas).enhance(contrast)
+            if saturation != 1.0:
+                canvas = ImageEnhance.Color(canvas).enhance(saturation)
 
-        canvas.save(out_path)
+            canvas.save(out_path)
+        except Exception as e:
+            # A truncated/corrupt source file (e.g. an interrupted upload)
+            # must not crash the whole rebuild - Restart=always would just
+            # crash-loop on this same file every time, since its mtime never
+            # changes. Skip it and keep going with the rest of the rotation.
+            log(f"Skipping {filename}, failed to composite: {e}")
+            continue
+
         _classic_composite_cache[filename] = cache_key
         _prepared_owner[filename] = "classic"
         paths.append(out_path)
@@ -531,28 +540,49 @@ def build_framed_display_list(order, poster_meta, rotation_degrees, brightness, 
             paths.append(out_path)
             continue
 
-        canvas = build_framed_poster(
-            source_path, meta, display_w, display_h, text_rgb, bg_rgb, position,
-            poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count,
-        )
+        try:
+            canvas = build_framed_poster(
+                source_path, meta, display_w, display_h, text_rgb, bg_rgb, position,
+                poster_scale_pct, top_content, top_custom_text, top_font_info, cast_count,
+            )
 
-        transpose_method = ROTATION_MAP.get(rotation_degrees)
-        if transpose_method is not None:
-            canvas = canvas.transpose(transpose_method)
+            transpose_method = ROTATION_MAP.get(rotation_degrees)
+            if transpose_method is not None:
+                canvas = canvas.transpose(transpose_method)
 
-        if brightness != 1.0:
-            canvas = ImageEnhance.Brightness(canvas).enhance(brightness)
-        if contrast != 1.0:
-            canvas = ImageEnhance.Contrast(canvas).enhance(contrast)
-        if saturation != 1.0:
-            canvas = ImageEnhance.Color(canvas).enhance(saturation)
+            if brightness != 1.0:
+                canvas = ImageEnhance.Brightness(canvas).enhance(brightness)
+            if contrast != 1.0:
+                canvas = ImageEnhance.Contrast(canvas).enhance(contrast)
+            if saturation != 1.0:
+                canvas = ImageEnhance.Color(canvas).enhance(saturation)
 
-        canvas.save(out_path)
+            canvas.save(out_path)
+        except Exception as e:
+            # See build_display_list's matching comment - a corrupt source
+            # file must not crash-loop the whole service.
+            log(f"Skipping {filename}, failed to composite: {e}")
+            continue
+
         _framed_composite_cache[filename] = cache_key
         _prepared_owner[filename] = "framed"
         paths.append(out_path)
 
     return paths
+
+
+def terminate_process(proc, timeout=5):
+    """terminate(), escalating to kill() if it doesn't exit in time. A plain
+    terminate()+wait() with no timeout would freeze this entire poll loop -
+    the schedule, Plex now-playing handling, every future rebuild - if fbi
+    ever wedges on tty I/O and doesn't respond to SIGTERM."""
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log(f"Process {proc.pid} didn't exit within {timeout}s, killing it")
+        proc.kill()
+        proc.wait()
 
 
 def start_fbi(paths, interval_seconds):
@@ -783,8 +813,7 @@ def main():
                 if display_on:
                     log("Scheduled off period - turning display off")
                     if current_process:
-                        current_process.terminate()
-                        current_process.wait()
+                        terminate_process(current_process)
                         current_process = None
                     # Forget what was applied so waking triggers a fresh
                     # rebuild rather than assuming the screen still holds it
@@ -872,11 +901,17 @@ def main():
             )
             # Includes title/credits, not just release_date, so a TMDb/Plex
             # metadata refresh (e.g. credits arriving after the poster itself)
-            # triggers a rebuild too, not just a poster file changing.
+            # triggers a rebuild too, not just a poster file changing. Also
+            # includes digital_release_date and today's date: compute_status_text
+            # keys "NOW SHOWING"/"COMING SOON" off those, not release_date, so
+            # without them a digital-date backfill or a plain day rollover
+            # (a date that's already passed) would never trigger a redraw and
+            # the band would show a stale status indefinitely.
             meta_fingerprint = tuple(sorted(
-                (k, v.get("release_date"), v.get("title"), json.dumps(v.get("credits"), sort_keys=True))
+                (k, v.get("release_date"), v.get("digital_release_date"), v.get("title"),
+                 json.dumps(v.get("credits"), sort_keys=True))
                 for k, v in poster_meta.items()
-            ))
+            )) + (date.today().isoformat(),)
 
             if active_appearance == "framed":
                 signature = (
@@ -899,8 +934,7 @@ def main():
 
             if not order:
                 if current_process:
-                    current_process.terminate()
-                    current_process.wait()
+                    terminate_process(current_process)
                     current_process = None
                     time.sleep(0.15)  # see the matching comment below - same async-restore race
                     blank_framebuffer()
@@ -927,8 +961,7 @@ def main():
 
                 old_process = current_process
                 if old_process:
-                    old_process.terminate()
-                    old_process.wait()
+                    terminate_process(old_process)
                     # fbi restores whatever was on the framebuffer before it
                     # started when it exits (see blank_framebuffer's
                     # docstring - this is the same quirk that made the boot
@@ -969,7 +1002,7 @@ def main():
         pass
     finally:
         if current_process:
-            current_process.terminate()
+            terminate_process(current_process)
 
 
 if __name__ == "__main__":

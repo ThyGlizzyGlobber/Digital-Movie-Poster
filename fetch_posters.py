@@ -36,6 +36,17 @@ def log(message):
     # wall-clock duration is readable directly off tmdb_sync.log. app.py
     # captures this process's stdout straight into that file, so this only
     # needs to print - no file handling here.
+    #
+    # api_key travels as a URL query param (that's how TMDb v3 auth works),
+    # so any requests.RequestException raised out of a TMDb call - a plain
+    # network hiccup, not just an auth/rate-limit error - embeds the full
+    # request URL, key included, in its string form. This is the one choke
+    # point every such message passes through before landing in
+    # tmdb_sync.log, which the web UI's Logs tab exposes, so redact here
+    # rather than at every call site.
+    message = str(message)
+    if TMDB_API_KEY:
+        message = message.replace(TMDB_API_KEY, "REDACTED")
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}", flush=True)
 
 
@@ -387,7 +398,18 @@ def fetch_digital_release_date(tmdb_id, api_key=None):
 
 
 def update_poster_meta(item, credits=None, digital_release_date=None):
-    payload = {"release_date": item["release_date"], "title": item["title"]}
+    # Only send title/release_date when we actually have a value. app.py's
+    # /poster-meta merges by key presence, not truthiness (existing.get(...)
+    # only kicks in when the key is missing) - so sending "" here would
+    # permanently blank out whatever was already recorded. That matters for
+    # backfill_digital_release_date below, which calls this with only a
+    # digital_release_date to add and no real title/release_date of its own
+    # when the poster's initial /upload -> /poster-meta pair never completed.
+    payload = {}
+    if item.get("release_date"):
+        payload["release_date"] = item["release_date"]
+    if item.get("title"):
+        payload["title"] = item["title"]
     if credits:
         payload["credits"] = credits
     if digital_release_date:

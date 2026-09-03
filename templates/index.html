@@ -93,9 +93,9 @@
   .content{flex:1;min-width:0;padding:28px 36px 100px}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
-  .subtab-panel{display:none}
-  .subtab-panel.active{display:block}
   .pagehead{margin-bottom:20px}
+  .banner{margin-bottom:20px;padding:12px 16px;border-radius:10px;font-size:13.5px;line-height:1.5}
+  .banner-warn{background:var(--warn-tint);border:1px solid var(--warn);color:var(--warn)}
   .pagehead h2{font-size:1.5rem}
 
   section.panel{background:var(--surface);border:1px solid var(--border);
@@ -382,6 +382,12 @@
 
   <div class="content">
 
+      {% if regrain_failed %}
+      <div class="banner banner-warn">
+        {{ regrain_failed }} poster{{ 's' if regrain_failed != 1 else '' }} failed to reprocess with the new grain settings and kept its previous look. Check the Logs tab (System) for details, or try Save again.
+      </div>
+      {% endif %}
+
       <!-- POSTERS -->
       <div class="tab-panel active" data-panel="posters">
         <div class="pagehead"><h2>Posters</h2></div>
@@ -395,7 +401,7 @@
           <div class="stat">
             <div class="label">Next sync</div>
             <div class="value">{{ next_sync_hours }}h <span class="unit">{{ next_sync_minutes }}m</span></div>
-            <div class="foot">{{ discovery_sync_time }} daily &middot; {{ 'JustWatch' if discovery_source == 'justwatch' else 'TMDb' }} active</div>
+            <div class="foot">{{ discovery_sync_time }} daily &middot; JustWatch active</div>
           </div>
           <div class="stat">
             <div class="label">Plex</div>
@@ -452,7 +458,7 @@
         <div class="grid" id="posterGrid">
           {% for poster in posters %}
           <div class="card" data-filename="{{ poster.filename }}" data-kind="{{ poster.kind }}" data-status="{{ poster.status }}">
-            <div class="poster" style="background-image:url('{{ url_for('static', filename='posters/' + poster.filename) }}')">
+            <div class="poster" style="background-image:url('{{ url_for('static', filename='posters/' + poster.filename) }}?v={{ poster.mtime }}')">
               {% if poster.status == 'showing' %}<span class="badge showing">Showing</span>
               {% elif poster.status == 'upcoming' %}<span class="badge upcoming">Coming soon</span>{% endif %}
               <span class="grip card-handle"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg></span>
@@ -472,7 +478,7 @@
                data-kind="{{ poster.kind }}" data-status="{{ poster.status }}">
             <span class="drag-handle"></span>
             <span class="position">{{ loop.index }}</span>
-            <img src="{{ url_for('static', filename='posters/' + poster.filename) }}" alt="">
+            <img src="{{ url_for('static', filename='posters/' + poster.filename) }}?v={{ poster.mtime }}" alt="">
             <span class="poster-name">{{ poster.title or poster.filename }}</span>
             {% if poster.status == 'showing' %}<span class="badge showing">Now showing</span>
             {% elif poster.status == 'upcoming' %}<span class="badge upcoming">Coming soon</span>{% endif %}
@@ -745,12 +751,14 @@
             <div class="field-group">
               <label class="field-label">Poster render resolution (px)</label>
               <div class="color-row">
-                <input type="number" id="display_width" name="display_width" min="100" max="8000" value="{{ display_width|numfmt }}" placeholder="Width" form="settingsForm">
-                <input type="number" id="display_height" name="display_height" min="100" max="8000" value="{{ display_height|numfmt }}" placeholder="Height" form="settingsForm">
+                <input type="number" id="poster_render_width" name="poster_render_width" min="100" max="8000" value="{{ poster_render_width|numfmt }}" placeholder="Width" form="settingsForm">
+                <input type="number" id="poster_render_height" name="poster_render_height" min="100" max="8000" value="{{ poster_render_height|numfmt }}" placeholder="Height" form="settingsForm">
               </div>
               <button type="button" class="primary" id="detectDisplayBtn" style="margin-top:10px;">Detect display</button>
               <div id="detectDisplayResult"></div>
-              <p class="note" style="margin:6px 0 0;">Lower than your screen's resolution is fine &mdash;
+              <p class="note" style="margin:6px 0 0;">Entered the same way as HDMI output resolution above
+                (e.g. 3840&times;2160), regardless of rotation - handled internally when rendering.
+                Lower than your screen's resolution is fine &mdash;
                 posters get scaled up to fit, and it keeps processing fast. "Detect display" fills in
                 good values automatically.</p>
             </div>
@@ -881,24 +889,17 @@
       <!-- DISCOVERY -->
       <div class="tab-panel" data-panel="discovery">
         <div class="pagehead"><h2>Discovery</h2></div>
+
         <section class="panel">
-          <p class="panel-label">Active discovery source</p>
+          <p class="panel-label">Add a specific title</p>
           <p class="note">
-            Only one source can be active at a time. Sync time is set on
-            the Schedule tab.
+            Paste a TMDb link to add a specific title. It stays in your
+            rotation permanently.
           </p>
-          <div style="display:flex;gap:8px;">
-            <label class="checkbox-row" style="flex:1;">
-              <input type="radio" name="discovery_source" value="tmdb" form="settingsForm"
-                     {{ 'checked' if discovery_source != 'justwatch' else '' }} onchange="syncDiscoverySource()">
-              <span>TMDb</span>
-            </label>
-            <label class="checkbox-row" style="flex:1;">
-              <input type="radio" name="discovery_source" value="justwatch" form="settingsForm"
-                     {{ 'checked' if discovery_source == 'justwatch' else '' }} onchange="syncDiscoverySource()">
-              <span>JustWatch</span>
-            </label>
-          </div>
+          <form action="/tmdb-add-link" method="post">
+            <input type="text" name="tmdb_url" placeholder="https://www.themoviedb.org/movie/550-fight-club" required>
+            <button type="submit" class="primary">Add title</button>
+          </form>
         </section>
 
         <section class="panel">
@@ -936,231 +937,6 @@
           </p>
         </section>
 
-        <div class="chips" id="discoverySubtabs" style="margin-bottom:16px;">
-          <button type="button" data-subtab="tmdb" class="active">TMDb</button>
-          <button type="button" data-subtab="justwatch">JustWatch</button>
-        </div>
-
-        <div class="subtab-panel active" data-subpanel="tmdb">
-        <section class="panel">
-          <p class="panel-label">Trending on TMDb</p>
-          <p class="note" style="margin-bottom:14px;">
-            What's trending on TMDb right now. Click a poster to add it to
-            your rotation.
-          </p>
-          <div class="discovery-status" id="tmdbPreviewStatus"></div>
-          <div class="grid discovery-grid" id="tmdbPreviewGrid"></div>
-          <button type="button" class="btn-small" id="tmdbPreviewRefresh" style="margin-top:14px;">Refresh</button>
-        </section>
-
-        <details class="advanced">
-        <summary>Settings &mdash; TMDb sync</summary>
-        <div class="advanced-body">
-        <section class="panel" style="margin-top:2px;">
-          <p class="panel-label">Add by link</p>
-          <p class="note">
-            Paste a TMDb link to add a specific title. It stays in your
-            rotation permanently.
-          </p>
-          <form action="/tmdb-add-link" method="post">
-            <input type="text" name="tmdb_url" placeholder="https://www.themoviedb.org/movie/550-fight-club" required>
-            <button type="submit" class="primary">Add title</button>
-          </form>
-        </section>
-
-        <section class="panel">
-          <p class="panel-label">TMDb automation</p>
-
-          <div class="field-group">
-            <label class="switch-row">
-              <span class="switch">
-                <input type="checkbox" name="tmdb_enabled" {{ 'checked' if tmdb_enabled else '' }} form="settingsForm">
-                <span class="switch-track"></span>
-              </span>
-              <span>Pull posters from TMDb</span>
-            </label>
-          </div>
-
-          <div class="field-group">
-            <label class="switch-row">
-              <span class="switch">
-                <input type="checkbox" name="tmdb_schedule_enabled" {{ 'checked' if tmdb_schedule_enabled else '' }} form="settingsForm">
-                <span class="switch-track"></span>
-              </span>
-              <span>Run automatically on a daily schedule</span>
-            </label>
-          </div>
-
-          <div class="field-group" style="margin-top:24px;">
-            <label class="field-label">Source</label>
-            <div style="display:flex;gap:8px;">
-              <label class="checkbox-row" style="flex:1;">
-                <input type="radio" name="tmdb_media_mode" value="movie" form="settingsForm"
-                       {{ 'checked' if tmdb_media_mode != 'tv' else '' }} onchange="syncMediaMode()">
-                <span>Movies</span>
-              </label>
-              <label class="checkbox-row" style="flex:1;">
-                <input type="radio" name="tmdb_media_mode" value="tv" form="settingsForm"
-                       {{ 'checked' if tmdb_media_mode == 'tv' else '' }} onchange="syncMediaMode()">
-                <span>TV</span>
-              </label>
-            </div>
-          </div>
-
-          <div id="movieSources">
-            <p class="panel-label" style="margin-top:24px;">Movie categories</p>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_movie_trending" {{ 'checked' if tmdb_sources.get('movie_trending') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Trending this week</span>
-              </label>
-              <input type="number" name="limit_movie_trending" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_trending', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_movie_popular" {{ 'checked' if tmdb_sources.get('movie_popular') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Popular now</span>
-              </label>
-              <input type="number" name="limit_movie_popular" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_popular', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_movie_now_playing" {{ 'checked' if tmdb_sources.get('movie_now_playing') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>In cinemas now</span>
-              </label>
-              <input type="number" name="limit_movie_now_playing" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_now_playing', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_movie_upcoming" {{ 'checked' if tmdb_sources.get('movie_upcoming') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Coming soon</span>
-              </label>
-              <input type="number" name="limit_movie_upcoming" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('movie_upcoming', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-          </div>
-
-          <div id="tvSources">
-            <p class="panel-label" style="margin-top:24px;">TV categories</p>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_tv_trending" {{ 'checked' if tmdb_sources.get('tv_trending') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Trending this week</span>
-              </label>
-              <input type="number" name="limit_tv_trending" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_trending', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_tv_popular" {{ 'checked' if tmdb_sources.get('tv_popular') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Popular now</span>
-              </label>
-              <input type="number" name="limit_tv_popular" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_popular', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-            <div class="field-group" style="display:flex;align-items:center;gap:12px;">
-              <label class="switch-row" style="flex:1;">
-                <span class="switch">
-                  <input type="checkbox" name="source_tv_on_the_air" {{ 'checked' if tmdb_sources.get('tv_on_the_air') else '' }} form="settingsForm">
-                  <span class="switch-track"></span>
-                </span>
-                <span>Currently airing</span>
-              </label>
-              <input type="number" name="limit_tv_on_the_air" min="1" max="20" step="1"
-                     value="{{ tmdb_source_limits.get('tv_on_the_air', tmdb_max_per_source)|numfmt }}"
-                     title="How many posters from this category"
-                     style="width:76px;flex-shrink:0;" form="settingsForm">
-            </div>
-          </div>
-
-          <p class="note" style="margin:18px 0 0;">
-            The number beside each category is how many posters to pull from it.
-          </p>
-        </section>
-
-        <details class="advanced">
-          <summary>Advanced &mdash; popularity filtering</summary>
-          <div class="advanced-body">
-            <div class="field-group">
-              <label for="tmdb_min_popularity" class="field-label">Minimum popularity &mdash; released titles</label>
-              <input type="number" id="tmdb_min_popularity" name="tmdb_min_popularity" min="0" max="2000" step="5" value="{{ tmdb_min_popularity|numfmt }}" form="settingsForm">
-              <p class="note" style="margin:8px 0 0;">
-                Filters out obscure titles. 30&ndash;50 works well. Use 0 for no filter.
-              </p>
-            </div>
-
-            <div class="field-group">
-              <label for="tmdb_min_popularity_upcoming" class="field-label">Minimum popularity &mdash; coming soon</label>
-              <input type="number" id="tmdb_min_popularity_upcoming" name="tmdb_min_popularity_upcoming" min="0" max="2000" step="1" value="{{ tmdb_min_popularity_upcoming|numfmt }}" form="settingsForm">
-              <p class="note" style="margin:8px 0 0;">
-                Unreleased films score much lower than released ones, so this
-                needs a smaller number. 8&ndash;15 works well.
-              </p>
-            </div>
-
-            <div class="field-group">
-              <label for="tmdb_upcoming_months" class="field-label">Coming soon window (months)</label>
-              <input type="number" id="tmdb_upcoming_months" name="tmdb_upcoming_months" min="1" max="36" step="1" value="{{ tmdb_upcoming_months|numfmt }}" form="settingsForm">
-              <p class="note" style="margin:8px 0 0;">
-                How many months ahead to look for upcoming releases.
-              </p>
-            </div>
-
-            <p class="note" style="margin:0;">
-              Region filtering applies to movies only, not TV.
-            </p>
-          </div>
-        </details>
-
-        <section class="panel">
-          <p class="panel-label">Actions</p>
-          <p class="note" id="tmdbActiveNote" style="margin-bottom:14px;"></p>
-          <form action="/tmdb-sync-now" method="post">
-            <button type="submit" class="primary" id="tmdbSyncBtn" style="margin-top:0;">Sync now</button>
-          </form>
-          <form action="/purge-tmdb" method="post"
-                onsubmit="return confirm('Remove every TMDb poster, including pinned ones? Your own uploads are kept.')">
-            <button type="submit" class="danger">Purge all TMDb posters</button>
-          </form>
-        </section>
-        </div>
-        </details>
-        </div>
-
-        <div class="subtab-panel" data-subpanel="justwatch">
         <section class="panel">
           <p class="panel-label">Trending on JustWatch</p>
           <p class="note" style="margin-bottom:14px;">
@@ -1211,7 +987,6 @@
 
         <section class="panel">
           <p class="panel-label">Actions</p>
-          <p class="note" id="justwatchActiveNote" style="margin-bottom:14px;"></p>
           <form action="/justwatch-sync-now" method="post">
             <button type="submit" class="primary" id="justwatchSyncBtn" style="margin-top:0;">Sync now</button>
           </form>
@@ -1219,10 +994,18 @@
                 onsubmit="return confirm('Remove every JustWatch poster? Your own uploads and TMDb posters are kept.')">
             <button type="submit" class="danger">Purge all JustWatch posters</button>
           </form>
+          <form action="/purge-tmdb" method="post"
+                onsubmit="return confirm('Remove every TMDb poster, including pinned ones? Your own uploads are kept.')">
+            <button type="submit" class="danger">Purge all TMDb posters</button>
+          </form>
+          <p class="note" style="margin:10px 0 0;">
+            TMDb is still used to fetch each poster's image and details -
+            this only clears out posters that were auto-added by an old
+            TMDb sync, before JustWatch became the only discovery source.
+          </p>
         </section>
         </div>
         </details>
-        </div>
       </div>
 
       <!-- PLEX -->
@@ -1507,9 +1290,17 @@
       const action = item.already_added
         ? '<span class="badge plain">In rotation</span>'
         : '<button type="button" class="btn-small pin-btn">Pin</button>';
+      // Order matters: the CSS engine only ever sees this after the HTML
+      // attribute value has already been entity-decoded, so a raw ' has to
+      // be dealt with as a real URL character (%27) *before* HTML-escaping
+      // - escaping it to &#39; instead would decode straight back to ' by
+      // the time it reaches url('...'), leaving that break-out unfixed.
+      // escapeHtmlDiscovery then covers the outer style="..." attribute
+      // itself (", &, etc.) without re-touching the already-handled '.
+      const safeThumb = escapeHtmlDiscovery(item.thumb_url.replace(/'/g, '%27'));
       return '<div class="card discovery-card' + (item.already_added ? ' added' : '') + '"'
-        + ' data-media="' + item.media + '" data-id="' + item.id + '">'
-        + '<div class="poster" style="background-image:url(\'' + item.thumb_url.replace(/'/g, "%27") + '\')"></div>'
+        + ' data-media="' + escapeHtmlDiscovery(item.media) + '" data-id="' + escapeHtmlDiscovery(item.id) + '">'
+        + '<div class="poster" style="background-image:url(\'' + safeThumb + '\')"></div>'
         + '<div class="cardfoot"><div class="title">' + label + '</div>' + action + '</div>'
         + '</div>';
     }).join('');
@@ -1537,11 +1328,7 @@
       }
       discoveryPreviewCache[source] = data.items;
       statusEl.className = 'discovery-status';
-      statusEl.textContent = data.items.length ? '' : (
-        source === 'tmdb'
-          ? 'No results - check that at least one category is enabled below.'
-          : 'No results found for this year yet.'
-      );
+      statusEl.textContent = data.items.length ? '' : 'No results found for this year yet.';
       renderDiscoveryGrid(source, data.items);
     }).catch(()=>{
       statusEl.className = 'discovery-status err';
@@ -1549,7 +1336,7 @@
     });
   }
 
-  ['tmdb', 'justwatch'].forEach(source=>{
+  ['justwatch'].forEach(source=>{
     const grid = document.getElementById(source + 'PreviewGrid');
     const refreshBtn = document.getElementById(source + 'PreviewRefresh');
     if(refreshBtn) refreshBtn.addEventListener('click', ()=> loadDiscoveryPreview(source, true));
@@ -1608,8 +1395,7 @@
     panels.forEach(p=>p.classList.toggle('active', p.dataset.panel === name));
     if(matched){ try{ sessionStorage.setItem('posterframe_tab', name); }catch(e){} }
     if(name === 'discovery'){
-      const activeChip = document.querySelector('#discoverySubtabs button.active');
-      loadDiscoveryPreview(activeChip ? activeChip.dataset.subtab : 'tmdb');
+      loadDiscoveryPreview('justwatch');
     }
     return matched;
   }
@@ -1694,77 +1480,6 @@
 
   if(logsTabActive()) startLogPolling();
 
-  // --- Discovery subtabs --------------------------------------------------
-  // Switching subtabs is purely a view choice (which source's settings
-  // you're looking at) and deliberately separate from discovery_source
-  // (which source actually syncs) - viewing JustWatch's settings shouldn't
-  // itself switch the frame over to pulling from JustWatch.
-  const discoverySubtabs = document.getElementById('discoverySubtabs');
-  const discoverySubpanels = document.querySelectorAll('.subtab-panel');
-
-  function activateSubtab(name){
-    if(!discoverySubtabs) return;
-    discoverySubtabs.querySelectorAll('button').forEach(b=>
-      b.classList.toggle('active', b.dataset.subtab === name));
-    discoverySubpanels.forEach(p=>p.classList.toggle('active', p.dataset.subpanel === name));
-    try{ sessionStorage.setItem('posterframe_discovery_subtab', name); }catch(e){}
-    // Only fetch if Discovery is the tab actually on screen right now - this
-    // also runs when restoring the saved subtab on page load, which can
-    // happen while a completely different main tab is active.
-    const discoveryPanel = document.querySelector('.tab-panel[data-panel="discovery"]');
-    if(discoveryPanel && discoveryPanel.classList.contains('active')){
-      loadDiscoveryPreview(name);
-    }
-  }
-
-  if(discoverySubtabs){
-    discoverySubtabs.addEventListener('click', e=>{
-      const b = e.target.closest('button[data-subtab]');
-      if(b) activateSubtab(b.dataset.subtab);
-    });
-    try{
-      const savedSub = sessionStorage.getItem('posterframe_discovery_subtab');
-      if(savedSub) activateSubtab(savedSub);
-    }catch(e){}
-  }
-
-  // Only the selected discovery_source's "Sync now" button stays enabled -
-  // mirrors the server-side check in /tmdb-sync-now and
-  // /justwatch-sync-now, so the UI doesn't even offer the disallowed
-  // action rather than letting a click quietly no-op.
-  function syncDiscoverySource(){
-    const chosen = document.querySelector('input[name="discovery_source"]:checked');
-    const active = chosen ? chosen.value : 'tmdb';
-
-    const tmdbBtn = document.getElementById('tmdbSyncBtn');
-    const jwBtn = document.getElementById('justwatchSyncBtn');
-    const tmdbNote = document.getElementById('tmdbActiveNote');
-    const jwNote = document.getElementById('justwatchActiveNote');
-
-    if(tmdbBtn) tmdbBtn.disabled = active !== 'tmdb';
-    if(jwBtn) jwBtn.disabled = active !== 'justwatch';
-    if(tmdbNote) tmdbNote.textContent = active === 'tmdb'
-      ? 'TMDb is the active discovery source.'
-      : 'JustWatch is the active source above, so syncing here is disabled.';
-    if(jwNote) jwNote.textContent = active === 'justwatch'
-      ? 'JustWatch is the active discovery source.'
-      : 'TMDb is the active source above, so syncing here is disabled.';
-  }
-  syncDiscoverySource();
-
-  // --- TMDb media mode --------------------------------------------------
-  // The hidden set is NOT disabled, so its checkbox states still submit
-  // and stay saved - switching back preserves each side's settings.
-  function syncMediaMode(){
-    const chosen = document.querySelector('input[name="tmdb_media_mode"]:checked');
-    if(!chosen) return;
-    const m = document.getElementById('movieSources');
-    const t = document.getElementById('tvSources');
-    if(m) m.style.display = chosen.value === 'movie' ? 'block' : 'none';
-    if(t) t.style.display = chosen.value === 'tv' ? 'block' : 'none';
-  }
-  syncMediaMode();
-
   // --- Display appearance -------------------------------------------------
   // Same non-disabled hidden-block trick as media mode above - the inactive
   // appearance's fields still submit and stay saved under their own prefixed
@@ -1799,6 +1514,15 @@
   document.querySelectorAll('[form="settingsForm"]').forEach(el=>{
     el.addEventListener('input', markDirty);
     el.addEventListener('change', markDirty);
+  });
+
+  // The hex text box paired with each color swatch isn't itself part of
+  // settingsForm (it just writes into the swatch's .value via oninput,
+  // which doesn't fire input/change on the swatch) - without this, typing
+  // a hex value directly never marks the form dirty and Save stays
+  // disabled until some other field is also touched.
+  document.querySelectorAll('.hex-input').forEach(el=>{
+    el.addEventListener('input', markDirty);
   });
 
   settingsForm.addEventListener('submit', ()=>{
@@ -2047,8 +1771,8 @@
   // --- Detect display -------------------------------------------------
   const detectDisplayBtn = document.getElementById('detectDisplayBtn');
   const detectDisplayResult = document.getElementById('detectDisplayResult');
-  const displayWidthInput = document.getElementById('display_width');
-  const displayHeightInput = document.getElementById('display_height');
+  const displayWidthInput = document.getElementById('poster_render_width');
+  const displayHeightInput = document.getElementById('poster_render_height');
   const hdmiWidthInput = document.getElementById('hdmi_width');
   const hdmiHeightInput = document.getElementById('hdmi_height');
 
