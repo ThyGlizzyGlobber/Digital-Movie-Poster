@@ -1609,19 +1609,21 @@ def update_already_running():
     return False
 
 
-@app.route("/update", methods=["POST"])
-def update_now():
-    """Pulls latest and restarts services - the actual "Update now" action.
+def _run_update(force):
+    """Shared body of /update and /update/force - runs update.sh detached
+    and returns a standby page immediately, since the last thing update.sh
+    does is restart posterframe-web itself. See update.sh's own comments
+    for why that's safe despite killing this request's own process tree.
 
-    Runs update.sh detached and returns a standby page immediately, since
-    the last thing update.sh does is restart posterframe-web itself. See
-    update.sh's own comments for why that's safe despite killing this
-    request's own process tree."""
+    force=True passes --force through to update.sh: a hard reset to match
+    the remote branch instead of refusing when the local branch has
+    diverged or the working tree is dirty - see update.sh's own header for
+    when that's the right call (a rewritten/force-pushed remote history,
+    not genuine local work worth keeping)."""
     if not os.path.exists(UPDATE_SCRIPT):
         return redirect(url_for("index"))
 
     lock_fd = acquire_update_lock()
-    already_running = lock_fd is None
 
     if lock_fd is not None:
         try:
@@ -1635,10 +1637,13 @@ def update_now():
                 # own reference to the same open file description, so the
                 # underlying flock stays held until update.sh itself exits.
                 subprocess_env["POSTERFRAME_LOCK_FD"] = str(lock_fd)
+                cmd = ["timeout", "900", "bash", UPDATE_SCRIPT]
+                if force:
+                    cmd.append("--force")
                 subprocess.Popen(
                     # 900s not 600s: a system-file update also runs install.sh
                     # (apt + pip), which needs more room than a code-only pull.
-                    ["timeout", "900", "bash", UPDATE_SCRIPT],
+                    cmd,
                     cwd=BASE_DIR,
                     stdout=log_file, stderr=subprocess.STDOUT,
                     start_new_session=True,
@@ -1697,6 +1702,23 @@ def update_now():
 <body><div><h1>Updating&hellip;</h1>
 <p>Pulling the latest code and restarting. {wait_copy} If the frame doesn't
 come back by then, give it a bit longer and refresh.</p></div></body></html>"""
+
+
+@app.route("/update", methods=["POST"])
+def update_now():
+    """The normal "Update now" action - refuses rather than force-merging
+    if the local branch has diverged or the working tree is dirty. See
+    _run_update / update.sh."""
+    return _run_update(force=False)
+
+
+@app.route("/update/force", methods=["POST"])
+def update_force():
+    """"Force update" - only reachable from the System tab's own confirm
+    dialog, for the case /update refuses: an intentional history rewrite
+    (amend/force-push) upstream, not genuine local work. See _run_update /
+    update.sh's --force mode."""
+    return _run_update(force=True)
 
 
 @app.route("/update/log")

@@ -1177,6 +1177,9 @@
           <form action="/update" method="post" id="updateForm" style="display:none">
             <button type="submit" class="primary" id="updateNowBtn">Update now</button>
           </form>
+          <form action="/update/force" method="post" id="updateForceForm" style="display:none">
+            <button type="submit" class="danger" id="updateForceBtn">Force update (discard local Git state)</button>
+          </form>
 
           <div id="updateProgress" style="display:none; margin-top:18px;">
             <p class="flash warn">Do not power off or unplug the frame while an update is in progress.</p>
@@ -1692,6 +1695,7 @@
   const checkUpdateBtn = document.getElementById('checkUpdateBtn');
   const updateResult = document.getElementById('updateResult');
   const updateForm = document.getElementById('updateForm');
+  const updateForceForm = document.getElementById('updateForceForm');
   const updateEstimate = document.getElementById('updateEstimate');
 
   function escapeHtml(s){
@@ -1727,6 +1731,7 @@
       checkUpdateBtn.textContent = 'Checking…';
       updateResult.innerHTML = '';
       updateForm.style.display = 'none';
+      if(updateForceForm) updateForceForm.style.display = 'none';
 
       fetch('/update/check').then(r=>r.json()).then(data=>{
         checkUpdateBtn.disabled = false;
@@ -1739,7 +1744,12 @@
 
         if(data.diverged){
           updateResult.innerHTML = '<p class="flash err">Local code has diverged from git ('
-            +data.ahead+' commit(s) not upstream) - can’t auto-update. Resolve this over SSH.</p>';
+            +data.ahead+' commit(s) not upstream) - can’t auto-update.</p>'
+            +'<p class="note">If you know this is expected - e.g. you amended and force-pushed a '
+            +'commit from your dev machine - Force update will reset the Pi to match GitHub exactly, '
+            +'discarding those local commit(s) and any uncommitted changes on the Pi. Otherwise, '
+            +'resolve it by hand over SSH first.</p>';
+          if(updateForceForm) updateForceForm.style.display = 'block';
           return;
         }
 
@@ -1831,9 +1841,11 @@
   const updateProgressFill = document.getElementById('updateProgressFill');
   const updateFinalNote = document.getElementById('updateFinalNote');
   const updateNowBtn = document.getElementById('updateNowBtn');
+  const updateForceBtn = document.getElementById('updateForceBtn');
 
   const UPDATE_STAGES = [
     {marker: '=== update started',      label: 'Starting update',            pct: 5},
+    {marker: 'Force update:',           label: 'Resetting to match GitHub',  pct: 12},
     {marker: 'Pulling ',                label: 'Downloading update',         pct: 20},
     {marker: 'Applying them with install.sh', label: 'Applying system changes', pct: 40},
     {marker: 'reinstalling dependencies', label: 'Installing dependencies',  pct: 55},
@@ -1984,30 +1996,51 @@
     })();
   }
 
+  // Shared by the normal and force update forms - identical flow either
+  // way, just a different URL and confirm copy. The button argument is
+  // whichever of updateNowBtn/updateForceBtn triggered this, so only that
+  // one (not both) gets disabled while the request is in flight.
+  function startUpdate(url, confirmText, btn){
+    if(!confirm(confirmText)) return;
+
+    updateForm.style.display = 'none';
+    if(updateForceForm) updateForceForm.style.display = 'none';
+    updateResult.innerHTML = '';
+    checkUpdateBtn.disabled = true;
+    if(btn) btn.disabled = true;
+    updateFinalNote.style.display = 'none';
+    updateHadDisconnect = false;
+    updateProgress.style.display = 'block';
+    updateDeviceStatus.textContent = 'Sending update request…';
+    updatePageStatus.textContent = 'Connected';
+    setBarPct(2);
+    startElapsedTimer();
+
+    fetch(url, {method: 'POST'})
+      .then(()=> pollUpdateProgress())
+      // A failed request here most likely means the update was fast
+      // enough to already be restarting before this response came back
+      // - fall into the same reconnect flow rather than calling it an
+      // error.
+      .catch(()=>{ updateHadDisconnect = true; pollUpdateProgress(); });
+  }
+
   if(updateForm){
     updateForm.addEventListener('submit', function(e){
       e.preventDefault();
-      if(!confirm('Pull the latest code and restart? The web UI will be briefly unavailable while it restarts.')) return;
+      startUpdate('/update',
+        'Pull the latest code and restart? The web UI will be briefly unavailable while it restarts.',
+        updateNowBtn);
+    });
+  }
 
-      updateForm.style.display = 'none';
-      updateResult.innerHTML = '';
-      checkUpdateBtn.disabled = true;
-      updateNowBtn.disabled = true;
-      updateFinalNote.style.display = 'none';
-      updateHadDisconnect = false;
-      updateProgress.style.display = 'block';
-      updateDeviceStatus.textContent = 'Sending update request…';
-      updatePageStatus.textContent = 'Connected';
-      setBarPct(2);
-      startElapsedTimer();
-
-      fetch('/update', {method: 'POST'})
-        .then(()=> pollUpdateProgress())
-        // A failed request here most likely means the update was fast
-        // enough to already be restarting before this response came back
-        // - fall into the same reconnect flow rather than calling it an
-        // error.
-        .catch(()=>{ updateHadDisconnect = true; pollUpdateProgress(); });
+  if(updateForceForm){
+    updateForceForm.addEventListener('submit', function(e){
+      e.preventDefault();
+      startUpdate('/update/force',
+        'Force update: this discards any local Git commits or uncommitted changes on the Pi and '
+        +'resets it to match GitHub exactly. This cannot be undone. Continue?',
+        updateForceBtn);
     });
   }
 

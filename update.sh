@@ -5,9 +5,18 @@
 # /update/check in app.py) - the point is that a normal code update never
 # needs SSH.
 #
-# Two modes:
+# Modes:
 #   ./update.sh --check   Reports what's available upstream. No changes.
 #   ./update.sh           Fast-forwards to the remote branch and restarts.
+#                          Refuses if the local branch has diverged (extra
+#                          local commits) or the working tree is dirty.
+#   ./update.sh --force   Like the above, but resets --hard to the remote
+#                          branch instead of refusing on either of those -
+#                          for the "I rewrote history with an amend/force-
+#                          push and the Pi's clone is now just stale, not
+#                          holding anything worth keeping" case. Discards
+#                          local commits and uncommitted changes alike; see
+#                          /update/force's own confirm dialog in the web UI.
 #
 # When the pull touches systemd/ or install.sh itself, this also re-runs
 # install.sh (as root, non-interactively - see the sudoers note in
@@ -33,6 +42,16 @@
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+
+CHECK_ONLY=0
+FORCE=0
+for arg in "$@"; do
+    case "$arg" in
+        --check) CHECK_ONLY=1 ;;
+        --force) FORCE=1 ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
 
 # Timestamped (matches the other log files' format) so a step's actual
 # wall-clock duration is readable directly off update.log instead of
@@ -93,7 +112,7 @@ behind="$(git rev-list --count HEAD.."$upstream")"
 ahead="$(git rev-list --count "$upstream"..HEAD)"
 system_changes="$(git diff --name-only HEAD "$upstream" -- systemd install.sh)"
 
-if [[ "${1:-}" == "--check" ]]; then
+if [[ "$CHECK_ONLY" == "1" ]]; then
     echo "CURRENT_SHA=$current_sha"
     echo "CURRENT_MSG=$current_msg"
     echo "REMOTE_SHA=$remote_sha"
@@ -111,32 +130,52 @@ fi
 log "=== update started ==="
 log "Currently at $current_sha ($current_msg)"
 
-if [[ "$behind" == "0" ]]; then
+# Computed once here rather than inline below - both branches need it, and
+# git diff --quiet HEAD -- is itself a mutation-free check.
+dirty=0
+git diff --quiet HEAD -- || dirty=1
+
+if [[ "$FORCE" != "1" ]]; then
+    if [[ "$behind" == "0" ]]; then
+        log "Already up to date."
+        exit 0
+    fi
+
+    if [[ "$ahead" != "0" ]]; then
+        log "Local branch has $ahead commit(s) not on $upstream - diverged, not auto-merging." >&2
+        log "Resolve this by hand over SSH (e.g. git status / git log), or use Force" >&2
+        log "update in the web UI if you know this is an intentional rewrite." >&2
+        exit 1
+    fi
+
+    # ahead=0 only means "no local commits" - a tracked file hand-edited over
+    # SSH but never committed wouldn't show up there, and git merge --ff-only
+    # doesn't refuse a dirty tree on its own unless the incoming pull actually
+    # conflicts with the uncommitted lines. Left unchecked, a non-conflicting
+    # pull would silently fold the uncommitted edit into the merge result,
+    # contradicting the "never silently discards work" guarantee documented
+    # above.
+    if [[ "$dirty" == "1" ]]; then
+        log "Local working tree has uncommitted changes - not auto-merging." >&2
+        log "Resolve this by hand over SSH (e.g. git status / git stash / git commit)." >&2
+        exit 1
+    fi
+elif [[ "$behind" == "0" && "$ahead" == "0" && "$dirty" == "0" ]]; then
+    # Force mode still shouldn't do a no-op reset when there's genuinely
+    # nothing to reconcile - same "already up to date" result either way.
     log "Already up to date."
     exit 0
-fi
-
-if [[ "$ahead" != "0" ]]; then
-    log "Local branch has $ahead commit(s) not on $upstream - diverged, not auto-merging." >&2
-    log "Resolve this by hand over SSH (e.g. git status / git log)." >&2
-    exit 1
-fi
-
-# ahead=0 only means "no local commits" - a tracked file hand-edited over SSH
-# but never committed wouldn't show up there, and git merge --ff-only doesn't
-# refuse a dirty tree on its own unless the incoming pull actually conflicts
-# with the uncommitted lines. Left unchecked, a non-conflicting pull would
-# silently fold the uncommitted edit into the merge result, contradicting the
-# "never silently discards work" guarantee documented above.
-if ! git diff --quiet HEAD --; then
-    log "Local working tree has uncommitted changes - not auto-merging." >&2
-    log "Resolve this by hand over SSH (e.g. git status / git stash / git commit)." >&2
-    exit 1
+elif [[ "$ahead" != "0" || "$dirty" == "1" ]]; then
+    log "Force update: local commit(s)/changes don't match $upstream - resetting to match it exactly." >&2
 fi
 
 log "Pulling $behind commit(s) from $upstream"
 before_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
-git merge --ff-only "$upstream"
+if [[ "$FORCE" == "1" ]]; then
+    git reset --hard "$upstream"
+else
+    git merge --ff-only "$upstream"
+fi
 after_reqs="$(git rev-parse HEAD:requirements.txt 2>/dev/null || true)"
 
 if [[ -n "$system_changes" ]]; then
