@@ -226,21 +226,38 @@ done
 if [[ -z "$CMDLINE" ]]; then
     warn "Couldn't find cmdline.txt (checked /boot/firmware and /boot) - skipping"
     warn "console silencing. Boot log text may draw over the spinner."
-elif grep -q 'systemd.show_status=0' "$CMDLINE"; then
-    log "Boot console already silenced ($CMDLINE)"
 else
-    log "Silencing boot console ($CMDLINE)"
-    [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
-
-    line="$(cat "$CMDLINE")"
+    # Checked flag-by-flag rather than gating the whole block on one marker
+    # (systemd.show_status=0 used to be it) - that meant a newly-added flag
+    # here (vt.global_cursor_default=0, added later to kill the blinking
+    # text cursor) would never reach an install that was already silenced
+    # by an earlier install.sh run, since the single-marker check would
+    # short-circuit past this entire section forever. Comparing the whole
+    # line before/after catches any of these still being missing.
+    original_line="$(cat "$CMDLINE")"
+    line="$original_line"
     # Redirect kernel console output to tty3 (off-screen) instead of tty1.
     line="$(echo "$line" | sed -E 's/console=tty[0-9]+/console=tty3/')"
-    for flag in quiet loglevel=3 logo.nologo systemd.show_status=0; do
+    # vt.global_cursor_default=0: the kernel's own blinking text-mode cursor
+    # is not "console output" the other flags above touch - it's a fbcon
+    # overlay that stays visible (and blinking) at whatever the console's
+    # last cursor position was, independent of any text ever being printed.
+    # On a rotated (portrait) panel that position renders in whichever
+    # physical corner the *unrotated* top-left ends up in after rotation -
+    # not necessarily the top-left the viewer sees.
+    for flag in quiet loglevel=3 logo.nologo systemd.show_status=0 vt.global_cursor_default=0; do
         if [[ "$line" != *"$flag"* ]]; then
             line="$line $flag"
         fi
     done
-    echo "$line" | priv tee "$CMDLINE" > /dev/null
+
+    if [[ "$line" == "$original_line" ]]; then
+        log "Boot console already silenced ($CMDLINE)"
+    else
+        log "Silencing boot console ($CMDLINE)"
+        [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
+        echo "$line" | priv tee "$CMDLINE" > /dev/null
+    fi
 fi
 
 # ---------------------------------------------------------------------------

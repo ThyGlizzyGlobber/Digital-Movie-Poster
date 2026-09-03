@@ -131,6 +131,13 @@ settings change causes).
 - Console text is silenced via `console=tty3` in `/boot/firmware/cmdline.txt`
   plus `quiet loglevel=3 logo.nologo systemd.show_status=0`, and `getty@tty1`
   is disabled. Without these, boot logs draw over the spinner.
+- **The blinking text-mode cursor is a separate thing from console text.**
+  None of the flags above touch it - it's an fbcon overlay that stays
+  visible at whatever the console's last cursor position was, independent
+  of whether anything was ever printed there. `vt.global_cursor_default=0`
+  in `cmdline.txt` is what actually disables it. On a rotated (portrait)
+  panel it can show up in a corner other than the top-left the viewer sees,
+  since the kernel's own cursor position isn't rotation-aware.
 
 ### Display power
 - **`vcgencmd display_power` does nothing under KMS/DRM** and still returns
