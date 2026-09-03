@@ -496,21 +496,25 @@
           <summary>Advanced &mdash; quality</summary>
           <div class="advanced-body">
             <div class="field-group">
-              <label for="poster_max_width" class="field-label">Working width (px)</label>
-              <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width|numfmt }}" form="settingsForm">
+              <label for="poster_max_width" class="field-label">Working width</label>
+              <select id="poster_max_width" name="poster_max_width" form="settingsForm">
+                <option value="720" {{ 'selected' if poster_max_width == 720 else '' }}>720px &mdash; small/weak hardware</option>
+                <option value="1080" {{ 'selected' if poster_max_width == 1080 else '' }}>1080px &mdash; Full HD portrait</option>
+                <option value="1600" {{ 'selected' if poster_max_width == 1600 else '' }}>1600px &mdash; default</option>
+                <option value="2160" {{ 'selected' if poster_max_width == 2160 else '' }}>2160px &mdash; 4K portrait</option>
+                <option value="0" {{ 'selected' if not poster_max_width else '' }}>Original Poster Quality</option>
+                {% if poster_max_width and poster_max_width not in (720, 1080, 1600, 2160) %}
+                <option value="{{ poster_max_width }}" selected>{{ poster_max_width }}px &mdash; current value</option>
+                {% endif %}
+              </select>
               <p class="note" style="margin:8px 0 0;">
                 How wide posters are resized before display. Match your
-                screen's short edge, then Save and click Apply below.
+                screen's short edge (or pick Original Poster Quality to keep
+                full quality on a fast enough Pi). Saving re-derives every
+                poster from its original at the new width automatically -
+                never damages your original images.
               </p>
             </div>
-
-            <form action="/reprocess-posters" method="post">
-              <button type="submit" class="primary">Apply to all posters</button>
-            </form>
-            <p class="note" style="margin:14px 0 0;">
-              Re-derives every poster from its original at the width above &mdash;
-              safe to run anytime, never damages your original images.
-            </p>
           </div>
         </details>
       </div>

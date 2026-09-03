@@ -892,15 +892,12 @@ def upload():
     return redirect(url_for("index"))
 
 
-@app.route("/reprocess-posters", methods=["POST"])
-def reprocess_posters():
+def reprocess_all_posters(max_width):
     """Re-derives every poster in static/posters/ from its untouched
-    original at the current poster_max_width - what "Apply to all posters"
-    on the Display tab runs, so a Working width change actually takes
-    effect on posters that were already processed at the old width."""
-    config = load_config()
-    max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
-
+    original at max_width - run from save_settings() whenever Working width
+    actually changes, so existing posters (already processed at the old
+    width) actually pick up the new one instead of only affecting future
+    uploads. Returns the list of filenames that failed to reprocess."""
     reprocessed = 0
     failed = []
     for filename in os.listdir(ORIGINAL_DIR):
@@ -917,13 +914,7 @@ def reprocess_posters():
             failed.append(filename)
 
     print(f"Reprocessed {reprocessed} poster(s) at width {max_width}")
-
-    # A poster that fails here keeps its old width, silently out of sync
-    # with the setting just saved - print() alone only reaches journald,
-    # nothing in the UI would ever show this happened otherwise.
-    if failed:
-        return redirect(url_for("index", reprocess_failed=len(failed)))
-    return redirect(url_for("index"))
+    return failed
 
 
 @app.route("/upload-boot-image", methods=["POST"])
@@ -2150,9 +2141,13 @@ def settings():
     if HEX_RE.match(accent):
         config["accent_color"] = accent
 
+    old_max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
     max_w = request.form.get("poster_max_width", type=int)
     if max_w is not None:
-        config["poster_max_width"] = max(400, min(3000, max_w))
+        # 0 means "don't resize - keep the full original as downloaded"
+        # (prepare_poster treats a falsy max_width as a no-op); any other
+        # value is still clamped to the dropdown's own range as a backstop.
+        config["poster_max_width"] = 0 if max_w == 0 else max(400, min(3000, max_w))
 
     config["randomize_after_sync"] = "randomize_after_sync" in request.form
 
@@ -2383,6 +2378,19 @@ def settings():
             classic["plex_band"] = band
 
     save_config(config)
+
+    # Only when Working width actually changed - every other settings save
+    # (accent color, schedule, anything) would otherwise pay for a full
+    # decode+resize pass over every poster for no reason. A poster that
+    # fails here keeps its old width, silently out of sync with the setting
+    # just saved - print() alone (inside reprocess_all_posters) only
+    # reaches journald, nothing in the UI would ever show this happened
+    # otherwise.
+    new_max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
+    if new_max_width != old_max_width:
+        failed = reprocess_all_posters(new_max_width)
+        if failed:
+            return redirect(url_for("index", reprocess_failed=len(failed)))
 
     return redirect(url_for("index"))
 
