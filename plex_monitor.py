@@ -6,8 +6,8 @@ drives the poster frame's "now playing" override accordingly.
 Talks to the frame only through app.py's own HTTP routes - /upload,
 /poster-meta/<filename>, /delete/<filename>, /plex/now-playing - never
 touching config.json or static/posters/ directly, same relationship
-fetch_posters.py already has with TMDb. No Pillow/numpy import here on
-purpose: the actual resize+grain work happens server-side in app.py's
+fetch_posters.py already has with TMDb. No Pillow import here on
+purpose: the actual resize work happens server-side in app.py's
 existing /upload pipeline, so this process stays a lightweight poller.
 """
 import json
@@ -152,7 +152,7 @@ def activate(server_url, headers, session, cast_count=4):
 
     files = {"poster": (POSTER_FILENAME, image_resp.content, "image/jpeg")}
     # 180s: same reasoning as fetch_posters.py - a Pi Zero can take well
-    # over 30s to resize+grain a full-resolution poster.
+    # over 30s to resize a full-resolution poster.
     requests.post(f"{APP_BASE}/upload", files=files, timeout=180).raise_for_status()
 
     title = title_for(session)

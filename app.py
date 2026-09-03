@@ -11,11 +11,10 @@ import uuid
 from datetime import date, datetime, timedelta
 from io import BytesIO
 from urllib.parse import urlencode
-import numpy as np
 import requests
 from flask import Flask, request, redirect, url_for, render_template, jsonify
 from werkzeug.utils import secure_filename
-from PIL import Image, ImageFilter, ImageEnhance
+from PIL import Image
 
 # fetch_posters.py/fetch_justwatch.py normally only ever talk to app.py over
 # HTTP (as detached subprocesses) - never the other way around, since only
@@ -30,9 +29,9 @@ import fetch_justwatch
 app = Flask(__name__)
 # Generous but bounded: TMDb "original" posters and manual uploads are a few
 # MB at most. This exists to stop a runaway or malicious upload from
-# exhausting memory during decode+grain (which allocates multiple full-res
-# float32 arrays), not to constrain normal use - Flask rejects anything over
-# this with a 413 before the request body is even fully read.
+# exhausting memory during decode, not to constrain normal use - Flask
+# rejects anything over this with a 413 before the request body is even
+# fully read.
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024
 
 
@@ -87,7 +86,6 @@ PLEX_TV = "https://plex.tv"
 DEFAULT_INTERVAL_SECONDS = 900  # 15 minutes
 DEFAULT_ACCENT = "#5b8cff"
 DEFAULT_BAND_BG = "#0a0a0b"
-DEFAULT_GRAIN_INTENSITY = 0.08
 DEFAULT_POSTER_MAX_WIDTH = 1600
 EMPTY_FONT = {"family": "", "status": "", "path": None, "bold_path": None, "is_variable": False}
 
@@ -420,8 +418,6 @@ def load_config():
         "poster_meta": {},
         "display_width": 1080,
         "display_height": 1920,
-        "grain_intensity": DEFAULT_GRAIN_INTENSITY,
-        "grain_enabled": True,
         "tmdb_enabled": True,
         "tmdb_schedule_enabled": True,
         "boot_image_seconds": 3.0,
@@ -579,28 +575,6 @@ def get_ordered_posters():
     return order
 
 
-def apply_film_grain(image, intensity=0.08, grain_size=1.0):
-    img = image.convert("RGB")
-    width, height = img.size
-    arr = np.array(img).astype(np.float32)
-
-    raw_noise = np.random.normal(loc=0, scale=255 * intensity, size=(height, width))
-    noise_uint8 = np.clip(raw_noise + 128, 0, 255).astype(np.uint8)
-    noise_img = Image.fromarray(noise_uint8, mode="L")
-    if grain_size > 0:
-        noise_img = noise_img.filter(ImageFilter.GaussianBlur(radius=grain_size))
-
-    noise = (np.array(noise_img).astype(np.float32) - 128)[:, :, np.newaxis]
-
-    grainy = np.clip(arr + noise, 0, 255).astype(np.uint8)
-    result = Image.fromarray(grainy)
-
-    result = ImageEnhance.Contrast(result).enhance(0.96)
-    result = ImageEnhance.Color(result).enhance(0.92)
-
-    return result
-
-
 def poster_media_type(filename):
     """movie or tv, from the filename prefix - tmdb_<media>_<id>.jpg /
     tmdbpin_<media>_<id>.jpg encode it directly; justwatch_movie_<id>.jpg
@@ -664,17 +638,8 @@ def describe_poster(filename, meta):
     }
 
 
-def prepare_poster(image, intensity, max_width, grain_enabled=True):
-    """Downscale to the working width, then apply grain unless disabled.
-
-    Order matters: graining a full-resolution image and shrinking it
-    afterwards both wastes time and blurs the grain into mush.
-
-    grain_enabled=False skips apply_film_grain entirely rather than calling
-    it with intensity=0 - the numpy noise array, Gaussian blur, and contrast/
-    color passes all run regardless of intensity, so zero-strength grain
-    costs the same as full-strength grain. On weak hardware (a Pi Zero W)
-    that cost is real; skipping the call is what actually saves it."""
+def prepare_poster(image, max_width):
+    """Downscale to the working width - what actually gets displayed."""
     img = image.convert("RGB")
 
     if max_width and img.width > max_width:
@@ -683,10 +648,7 @@ def prepare_poster(image, intensity, max_width, grain_enabled=True):
             (max_width, max(1, round(img.height * ratio))), Image.LANCZOS
         )
 
-    if not grain_enabled:
-        return img
-
-    return apply_film_grain(img, intensity=intensity)
+    return img
 
 
 @app.route("/")
@@ -746,8 +708,6 @@ def index():
         poster_render_width, poster_render_height = display_width, display_height
     classic_display_font = classic.get("display_font", {})
     framed_top_font = framed.get("top_font", {})
-    grain_intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
-    grain_enabled = config.get("grain_enabled", True)
     tmdb_enabled = config.get("tmdb_enabled", True)
     tmdb_schedule_enabled = config.get("tmdb_schedule_enabled", True)
     discovery_source = config.get("discovery_source", "tmdb")
@@ -836,8 +796,6 @@ def index():
         hdmi_height=hdmi_height,
         poster_render_width=poster_render_width,
         poster_render_height=poster_render_height,
-        grain_intensity=grain_intensity,
-        grain_enabled=grain_enabled,
         tmdb_enabled=tmdb_enabled,
         tmdb_schedule_enabled=tmdb_schedule_enabled,
         discovery_source=discovery_source,
@@ -881,7 +839,7 @@ def index():
         plex_home_users=plex_home_users,
         classic_plex_band=classic_plex_band,
         plex_connected=plex_connected,
-        regrain_failed=request.args.get("regrain_failed", type=int),
+        reprocess_failed=request.args.get("reprocess_failed", type=int),
     )
 
 
@@ -892,8 +850,6 @@ def upload():
         return redirect(url_for("index"))
 
     config = load_config()
-    intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
-    grain_enabled = config.get("grain_enabled", True)
     max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
 
     filename = secure_filename(file.filename)
@@ -906,12 +862,12 @@ def upload():
         return redirect(url_for("index"))
 
     # Originals are kept at full resolution so raising the working width
-    # later just needs a re-grain, not a re-download.
+    # later just needs a re-resize, not a re-download.
     original_path = os.path.join(ORIGINAL_DIR, filename)
     image.convert("RGB").save(original_path)
 
     try:
-        prepare_poster(image, intensity, max_width, grain_enabled).save(os.path.join(POSTER_DIR, filename))
+        prepare_poster(image, max_width).save(os.path.join(POSTER_DIR, filename))
     except Exception as e:
         # Don't leave the original behind with nothing tracking it - a
         # failure here (disk full, unexpected image mode) used to leave this
@@ -924,7 +880,7 @@ def upload():
             pass
         return redirect(url_for("index"))
 
-    # Reload right before mutating shared state: decode+grain above can take
+    # Reload right before mutating shared state: decode+resize above can take
     # well over the 3s slideshow poll interval on slow hardware, and writing
     # back the config object loaded at the top of this request would silently
     # revert any settings save/reorder/delete that completed in that window.
@@ -936,18 +892,14 @@ def upload():
     return redirect(url_for("index"))
 
 
-@app.route("/regrain", methods=["POST"])
-def regrain():
-    intensity = request.form.get("grain_intensity", type=float)
-    if intensity is None:
-        return redirect(url_for("index"))
-    intensity = max(0.0, min(0.3, intensity))
-    grain_enabled = "grain_enabled" in request.form
-
+@app.route("/reprocess-posters", methods=["POST"])
+def reprocess_posters():
+    """Re-derives every poster in static/posters/ from its untouched
+    original at the current poster_max_width - what "Apply to all posters"
+    on the Display tab runs, so a Working width change actually takes
+    effect on posters that were already processed at the old width."""
     config = load_config()
-    config["grain_intensity"] = intensity
-    config["grain_enabled"] = grain_enabled
-    save_config(config)
+    max_width = config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)
 
     reprocessed = 0
     failed = []
@@ -958,22 +910,19 @@ def regrain():
         try:
             image = Image.open(original_path)
             image.load()
-            prepare_poster(image, intensity,
-                           config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH),
-                           grain_enabled,
-                           ).save(os.path.join(POSTER_DIR, filename))
+            prepare_poster(image, max_width).save(os.path.join(POSTER_DIR, filename))
             reprocessed += 1
         except Exception as e:
-            print(f"Failed to regrain {filename}: {e}")
+            print(f"Failed to reprocess {filename}: {e}")
             failed.append(filename)
 
-    print(f"Reprocessed {reprocessed} poster(s), grain {'on' if grain_enabled else 'off'} (intensity {intensity})")
+    print(f"Reprocessed {reprocessed} poster(s) at width {max_width}")
 
-    # A poster that fails here keeps whatever grain it had before, silently
-    # out of sync with the settings just saved - print() alone only reaches
-    # journald, nothing in the UI would ever show this happened otherwise.
+    # A poster that fails here keeps its old width, silently out of sync
+    # with the setting just saved - print() alone only reaches journald,
+    # nothing in the UI would ever show this happened otherwise.
     if failed:
-        return redirect(url_for("index", regrain_failed=len(failed)))
+        return redirect(url_for("index", reprocess_failed=len(failed)))
     return redirect(url_for("index"))
 
 
@@ -1296,15 +1245,12 @@ def pin_tmdb_title(media, item_id):
     image.raise_for_status()
 
     filename = f"tmdbpin_{media}_{item_id}.jpg"
-    intensity = config.get("grain_intensity", DEFAULT_GRAIN_INTENSITY)
-    grain_enabled = config.get("grain_enabled", True)
 
     source = Image.open(BytesIO(image.content))
     source.load()
 
     source.convert("RGB").save(os.path.join(ORIGINAL_DIR, filename))
-    prepare_poster(source, intensity,
-        config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH), grain_enabled).save(os.path.join(POSTER_DIR, filename))
+    prepare_poster(source, config.get("poster_max_width", DEFAULT_POSTER_MAX_WIDTH)).save(os.path.join(POSTER_DIR, filename))
 
     # Unlike the old /tmdb-add-link (which only saved title/release_date),
     # this fetches credits too - the sync scripts already do this, so a
@@ -1319,7 +1265,7 @@ def pin_tmdb_title(media, item_id):
 
     # Reload right before mutating shared state: everything above this point
     # can take several seconds (two-plus TMDb round-trips, credits, digital-
-    # release lookup, image decode/grain) - writing back the config object
+    # release lookup, image decode/resize) - writing back the config object
     # loaded at the top of this function would silently revert any settings
     # save/reorder/delete that completed while this was in flight.
     config = load_config()
@@ -1386,10 +1332,15 @@ def discovery_pin():
     return jsonify({"ok": True, "filename": filename, "title": title})
 
 
-@app.route("/purge-tmdb", methods=["POST"])
-def purge_tmdb():
-    """Remove every TMDb-sourced poster in one go - both auto-synced and
-    pinned. Manually uploaded posters are left alone."""
+@app.route("/purge-pinned", methods=["POST"])
+def purge_pinned():
+    """Remove every title added by pasting a TMDb link or clicking a
+    Discovery-grid poster - tmdbpin_ files. These live outside the normal
+    sync's own bookkeeping on purpose (see pin_tmdb_title's docstring: a
+    pinned title should survive a sync even after it stops trending), so
+    nothing else ever cleans them up - this is the only way to clear them
+    out in bulk. Manually uploaded and JustWatch-synced posters are left
+    alone."""
     config = load_config()
     removed = 0
 
@@ -1397,7 +1348,7 @@ def purge_tmdb():
         if not os.path.isdir(directory):
             continue
         for name in os.listdir(directory):
-            if name.startswith("tmdb_") or name.startswith("tmdbpin_"):
+            if name.startswith("tmdbpin_"):
                 try:
                     os.remove(os.path.join(directory, name))
                     if directory == POSTER_DIR:
@@ -1405,21 +1356,14 @@ def purge_tmdb():
                 except OSError:
                     pass
 
-    config["order"] = [
-        f for f in config.get("order", [])
-        if not (f.startswith("tmdb_") or f.startswith("tmdbpin_"))
-    ]
+    config["order"] = [f for f in config.get("order", []) if not f.startswith("tmdbpin_")]
     config["poster_meta"] = {
         k: v for k, v in config.get("poster_meta", {}).items()
-        if not (k.startswith("tmdb_") or k.startswith("tmdbpin_"))
+        if not k.startswith("tmdbpin_")
     }
     save_config(config)
 
-    tracking = os.path.join(BASE_DIR, "tmdb_tracked.json")
-    if os.path.exists(tracking):
-        os.remove(tracking)
-
-    print(f"Purged {removed} TMDb poster(s)")
+    print(f"Purged {removed} pinned poster(s)")
     return redirect(url_for("index"))
 
 
@@ -2095,11 +2039,10 @@ def detect_pi_model():
 
 def safe_render_long_edge(model):
     """A render resolution ceiling (longest edge, px) for hardware too weak
-    to composite/grain a full-size image in reasonable time - see
-    apply_film_grain's unconditional numpy/blur/enhance cost. Zero W is the
-    only board actually measured (CLAUDE.md's ~13s/poster baseline is at
-    today's ~1920px long edge), so it's the only one capped; everything else
-    (Pi 4/5, unrecognized future boards) is trusted uncapped rather than
+    to composite a full-size image in reasonable time. Zero W is the only
+    board actually measured (CLAUDE.md's per-poster baseline is at today's
+    ~1920px long edge), so it's the only one capped; everything else (Pi
+    4/5, unrecognized future boards) is trusted uncapped rather than
     guessing at tiers with no measurements behind them."""
     if model and "Zero" in model:
         return 1920

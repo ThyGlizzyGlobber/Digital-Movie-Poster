@@ -270,8 +270,8 @@ fi
 # "Poster render resolution" - the two used to be the same field, but a
 # display far more capable than the Pi driving it needs the physical signal
 # forced to its true native resolution while the render canvas stays modest
-# enough for the Pi to actually keep up composting/graining it - see
-# /detect-display in app.py, which suggests exactly that split) - swapped
+# enough for the Pi to actually keep up compositing it - see /detect-display
+# in app.py, which suggests exactly that split) - swapped
 # when rotation_degrees is 90/270, matching how slideshow.py's canvas ends
 # up physically oriented after the same rotation gets applied before handing
 # frames to fbi. Falls back to 1920x1080 when config.json doesn't exist yet

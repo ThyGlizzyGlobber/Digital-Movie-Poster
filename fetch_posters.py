@@ -261,9 +261,9 @@ def upload_poster(item):
     image_resp.raise_for_status()
 
     files = {"poster": (item["filename"], image_resp.content, "image/jpeg")}
-    # Generous: the Pi has to decode a full-resolution poster, resize it,
-    # and apply grain before responding. On a Zero W that can take well
-    # over 30s, and timing out here is what strands half-added posters.
+    # Generous: the Pi has to decode a full-resolution poster and resize it
+    # before responding. On a Zero W that can take well over 30s, and
+    # timing out here is what strands half-added posters.
     resp = requests.post(f"{APP_BASE}/upload", files=files, timeout=180)
     resp.raise_for_status()
     log(f"Added: {item['title']}")
@@ -486,7 +486,7 @@ def maybe_randomize_order(config):
     The delay itself exists so a sync that just added several new posters
     doesn't shuffle them in mid-composite - see CLAUDE.md's pipeline
     section: /upload's response (and so this script's own upload_poster
-    call) already waits for resize+grain to finish, but slideshow.py still
+    call) already waits for the resize to finish, but slideshow.py still
     needs its own next 3s poll plus however long compositing the new
     entries takes before they're actually ready to display."""
     if not config.get("randomize_after_sync", False):

@@ -382,9 +382,9 @@
 
   <div class="content">
 
-      {% if regrain_failed %}
+      {% if reprocess_failed %}
       <div class="banner banner-warn">
-        {{ regrain_failed }} poster{{ 's' if regrain_failed != 1 else '' }} failed to reprocess with the new grain settings and kept its previous look. Check the Logs tab (System) for details, or try Save again.
+        {{ reprocess_failed }} poster{{ 's' if reprocess_failed != 1 else '' }} failed to reprocess at the new working width and kept its previous size. Check the Logs tab (System) for details, or try again.
       </div>
       {% endif %}
 
@@ -493,37 +493,23 @@
         {% endif %}
 
         <details class="advanced">
-          <summary>Advanced &mdash; quality &amp; grain</summary>
+          <summary>Advanced &mdash; quality</summary>
           <div class="advanced-body">
             <div class="field-group">
               <label for="poster_max_width" class="field-label">Working width (px)</label>
               <input type="number" id="poster_max_width" name="poster_max_width" min="400" max="3000" step="100" value="{{ poster_max_width|numfmt }}" form="settingsForm">
               <p class="note" style="margin:8px 0 0;">
                 How wide posters are resized before display. Match your
-                screen's short edge, then click Apply below.
+                screen's short edge, then Save and click Apply below.
               </p>
             </div>
 
-            <form action="/regrain" method="post">
-              <div class="field-group">
-                <label class="switch-row" style="display:inline-flex;">
-                  <span class="switch">
-                    <input type="checkbox" name="grain_enabled" {{ 'checked' if grain_enabled else '' }}>
-                    <span class="switch-track"></span>
-                  </span>
-                  Film grain enabled
-                </label>
-                <p class="note" style="margin:6px 0 0;">Gives posters a printed, film-like texture instead of a flat digital look.</p>
-              </div>
-              <div class="field-group">
-                <div class="field-label"><span>Intensity</span><span class="val" id="grainVal">{{ grain_intensity }}</span></div>
-                <input type="range" name="grain_intensity" min="0" max="0.3" step="0.01" value="{{ grain_intensity }}"
-                       oninput="document.getElementById('grainVal').textContent=this.value">
-              </div>
+            <form action="/reprocess-posters" method="post">
               <button type="submit" class="primary">Apply to all posters</button>
             </form>
             <p class="note" style="margin:14px 0 0;">
-              Safe to run anytime &mdash; never damages your original images.
+              Re-derives every poster from its original at the width above &mdash;
+              safe to run anytime, never damages your original images.
             </p>
           </div>
         </details>
@@ -994,14 +980,13 @@
                 onsubmit="return confirm('Remove every JustWatch poster? Your own uploads and TMDb posters are kept.')">
             <button type="submit" class="danger">Purge all JustWatch posters</button>
           </form>
-          <form action="/purge-tmdb" method="post"
-                onsubmit="return confirm('Remove every TMDb poster, including pinned ones? Your own uploads are kept.')">
-            <button type="submit" class="danger">Purge all TMDb posters</button>
+          <form action="/purge-pinned" method="post"
+                onsubmit="return confirm('Remove every title added by pasting a TMDb link or pinning one from a Discovery grid? Your own uploads are kept.')">
+            <button type="submit" class="danger">Purge link-added posters</button>
           </form>
           <p class="note" style="margin:10px 0 0;">
-            TMDb is still used to fetch each poster's image and details -
-            this only clears out posters that were auto-added by an old
-            TMDb sync, before JustWatch became the only discovery source.
+            Only clears titles added via "Add a specific title" or a Discovery
+            pin - not anything JustWatch added automatically.
           </p>
         </section>
         </div>
@@ -1355,7 +1340,7 @@
       btn.disabled = true;
       btn.textContent = 'Pinning…';
 
-      // Pinning resizes+grains a full poster server-side, same as a normal
+      // Pinning resizes a full poster server-side, same as a normal
       // upload - can take well over 30s on a Pi Zero W (see CLAUDE.md), so
       // this is a real wait, not a formality.
       fetch('/discovery-pin', {

@@ -1,13 +1,13 @@
 # Poster Frame
 
 A wall-mounted digital movie poster display. Posters rotate on a schedule,
-are pulled automatically from [TMDb](https://www.themoviedb.org/), and
-everything is configured through a self-hosted web UI — no SSH needed once
-it's set up. A film-grain filter is baked into each poster so it reads as a
-printed sheet rather than a screen.
+discovered automatically via [JustWatch](https://www.justwatch.com/) and
+fetched from [TMDb](https://www.themoviedb.org/), and everything is
+configured through a self-hosted web UI — no SSH needed once it's set up.
 
-Built for a Raspberry Pi Zero W running Raspberry Pi OS **Lite** (headless,
-no desktop), driving a display over HDMI straight to the Linux framebuffer.
+Runs on a Raspberry Pi (a Pi 4 is recommended; a Pi Zero W still works, just
+slower) running Raspberry Pi OS **Lite** (headless, no desktop), driving a
+display over HDMI straight to the Linux framebuffer.
 
 ## Setup
 
@@ -33,10 +33,11 @@ no desktop), driving a display over HDMI straight to the Linux framebuffer.
    slideshow. It's safe to re-run. It'll offer to reboot at the end — say yes.
 
 4. After reboot, open `http://<pi-ip-address>:5000` from another device on
-   the network and configure everything there: display size/rotation,
-   TMDb API key and sync filters, band text, fonts, schedule, and power
-   controls. Get a free TMDb API key (v3 auth) at
-   <https://www.themoviedb.org/settings/api>.
+   the network and configure everything there: display size/rotation, TMDb
+   API key, band text, fonts, schedule, and power controls. Get a free TMDb
+   API key (v3 auth) at <https://www.themoviedb.org/settings/api> — it's
+   needed even though JustWatch drives discovery, since TMDb is what
+   actually supplies each poster's image and details.
 
 You can also upload your own posters directly from the web UI without ever
 touching TMDb.
@@ -44,20 +45,22 @@ touching TMDb.
 ## Day to day
 
 Everything is driven from the web UI — adding/removing/reordering posters,
-changing the sync filters, adjusting the display, and rebooting/shutting
-down the Pi. You shouldn't need to SSH in again after initial setup.
+changing the discovery settings, adjusting the display, and rebooting/
+shutting down the Pi. You shouldn't need to SSH in again after initial
+setup.
 
 If you do need to check on it:
 
 ```bash
 sudo systemctl status posterframe-web posterframe-slideshow posterframe-plex
 tail -f ~/posterframe/slideshow.log      # display loop's own log
-tail -f ~/posterframe/tmdb_sync.log      # last manual/scheduled TMDb sync
+tail -f ~/posterframe/justwatch_sync.log # last manual/scheduled discovery sync
 sudo systemctl restart posterframe-slideshow
 ```
 
-The scheduled TMDb sync runs daily at 04:00 (`posterframe-fetch.timer`); use
-"Sync now" in the web UI to trigger one immediately.
+The scheduled discovery sync runs daily at 04:00 by default
+(`posterframe-fetch.timer`); use "Sync now" in the web UI to trigger one
+immediately.
 
 ## Plex "Now Playing"
 
@@ -126,15 +129,19 @@ web UI itself can't be used to update.
   at `/etc/sudoers.d/posterframe` failed to install; re-run `install.sh` and
   check its output.
 - **"Update now" fails or says diverged** — check `update.log`. "Diverged"
-  means a tracked file was hand-edited on the Pi outside of git; resolve it
-  over SSH (`git status`/`git diff` in `~/posterframe`) rather than force it.
+  means the Pi's local commit doesn't match GitHub — either a tracked file
+  was hand-edited on the Pi outside of git (resolve that one over SSH:
+  `git status`/`git diff` in `~/posterframe`), or you rewrote history with
+  an `amend`/force-push from your dev machine, in which case **Force
+  update** (next to "Update now" once a divergence is detected) resets the
+  Pi to match GitHub exactly, no SSH needed.
 - **Update applied the code but not sudoers/systemd/boot settings** — check
   `update.log` for "install.sh failed or isn't permitted yet". Expected on
   the very first update after this feature was added (see Updating above);
   otherwise, run `install.sh` over SSH and check its output for the real error.
-- **TMDb sync isn't picking anything up** — check `tmdb_sync.log`, and
-  confirm the API key is set (web UI → TMDb tab) and at least one source
-  category is enabled with a low enough popularity threshold.
+- **Discovery sync isn't picking anything up** — check `justwatch_sync.log`,
+  and confirm the API key is set (web UI → Discovery tab) and JustWatch
+  automation is enabled with a sensible title count.
 - **Plex "Now Playing" isn't triggering** — check `plex_monitor.log` and
   `sudo systemctl status posterframe-plex`. Confirm **Show Now Playing
   overrides** is on (Plex tab), and that you're playing from the *same*

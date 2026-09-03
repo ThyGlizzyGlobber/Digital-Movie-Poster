@@ -1,9 +1,8 @@
 # Poster Frame
 
-A wall-mounted digital movie poster display running on a Raspberry Pi Zero W.
-Posters rotate on a schedule, are pulled automatically from TMDb, and everything
-is configured through a self-hosted web UI. A film-grain filter is baked into
-each poster so it reads as a printed sheet rather than a screen.
+A wall-mounted digital movie poster display running on a Raspberry Pi.
+Posters rotate on a schedule, are pulled automatically from TMDb/JustWatch,
+and everything is configured through a self-hosted web UI.
 
 **The web UI is the source of truth.** Nothing should require SSH to configure.
 If you add a feature, add its controls to the UI.
@@ -15,8 +14,8 @@ If you add a feature, add its controls to the UI.
 - **Raspberry Pi 4** is the recommended/production target. A **Pi Zero W**
   (single-core ARMv6, 512MB) still works — the whole pipeline was originally
   built and tuned against one, so nothing here assumes a Pi 4 — but it's slow
-  (e.g. the ~13s/poster grain pipeline, 90s boot) and no longer recommended
-  for a production install.
+  (e.g. multi-second-per-poster decode+resize, 90s boot) and no longer
+  recommended for a production install.
 - Raspberry Pi OS **Lite** (32-bit), Bookworm-era, **headless, no desktop**
 - Display over HDMI. Currently a test monitor; the eventual target is a ~40–43"
   TV in **portrait** (≈900mm tall)
@@ -80,7 +79,8 @@ individual apt/tee/systemctl calls.
 1. `fetch_posters.py` downloads from TMDb, POSTs to `/upload`, then POSTs
    release date + title to `/poster-meta/<filename>`.
 2. `/upload` saves the untouched image to `originals/`, then runs
-   `prepare_poster()` (**resize first, then grain**) into `static/posters/`.
+   `prepare_poster()` (resizes to the configured working width) into
+   `static/posters/`.
 3. `slideshow.py` polls `config.json` every 3s. When its signature changes it
    composites each poster onto a full-screen canvas (poster scaled to width,
    leftover space becomes text bands) into `prepared/`, then hands the list to
@@ -126,7 +126,8 @@ settings change causes).
 - **Keep the old fbi process alive during the slow work.** Composite first,
   *then* terminate old and start new. Killing first leaves a visible gap.
 - The rebuild signature includes poster file **mtimes**, not just filenames —
-  otherwise re-graining (which overwrites in place) never triggers a redraw.
+  otherwise reprocessing a poster in place (e.g. a working-width change)
+  never triggers a redraw.
 - Console text is silenced via `console=tty3` in `/boot/firmware/cmdline.txt`
   plus `quiet loglevel=3 logo.nologo systemd.show_status=0`, and `getty@tty1`
   is disabled. Without these, boot logs draw over the spinner.
@@ -160,8 +161,9 @@ settings change causes).
   `region` is meaningless for TV.
 - Movie ID 550 and TV ID 550 are different titles — media type **must** be in
   the filename.
-- Uploads need a long client timeout (180s). Full-res decode + grain on a Zero W
-  regularly exceeds 30s, and timing out mid-upload strands orphaned posters.
+- Uploads need a long client timeout (180s). Full-res decode + resize on a
+  Zero W regularly exceeds 30s, and timing out mid-upload strands orphaned
+  posters.
 
 ### Web UI
 - All settings inputs live in one `<form id="settingsForm">` via the HTML5
@@ -294,7 +296,7 @@ settings change causes).
   `plex_now_playing.active` can stay stuck `true` with nothing to correct it.
   Known v1 limitation, not solved yet.
 - **Expect real latency from "press play" to "poster changes."** Up to
-  `plex_poll_seconds` to notice, plus the same ~13s/poster grain pipeline
+  `plex_poll_seconds` to notice, plus the same decode+resize pipeline
   every other poster goes through, plus slideshow.py's normal 3s poll.
   15-30s end to end is normal, not a bug.
 
@@ -314,11 +316,15 @@ settings change causes).
 
 ## State of play
 
-Working: poster upload with grain, drag reorder, TMDb sync (movies + TV, per-
-category limits, popularity filters, age-based expiry with a "still in cinemas"
-reprieve), pin-by-URL, boot logo + animated spinner, display calibration,
-custom Google Fonts, band text with release-aware status, tabbed UI with unified
-save, power controls, in-UI code updates ("Update now") with a live
-progress bar through the restart/reconnect cycle, Plex "Now Playing"
-overrides (PIN sign-in, dedicated band independent of the normal top/bottom
-content settings).
+Working: poster upload, drag reorder, JustWatch discovery/sync (the only
+selectable discovery source - TMDb's own category-based discovery still
+exists in fetch_posters.py but isn't reachable from the UI), age-based
+expiry with a "still in cinemas" reprieve, pin-by-URL (TMDb link or a
+Discovery-grid click, purged separately from JustWatch-synced posters),
+boot logo + animated spinner, display calibration, custom Google Fonts,
+band text with release-aware status, tabbed UI with unified save, power
+controls, in-UI code updates ("Update now" and "Force update" for a
+diverged/rewritten git history) with a live progress bar through the
+restart/reconnect cycle, Plex "Now Playing" overrides (PIN sign-in,
+dedicated band independent of the normal top/bottom content settings).
+No film-grain step - posters are stored resized but otherwise untouched.
