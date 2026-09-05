@@ -585,6 +585,42 @@ def terminate_process(proc, timeout=5):
         proc.wait()
 
 
+def fbi_is_running():
+    """Whether any fbi process is currently alive, checked system-wide
+    rather than via the specific Popen handle this module tracks - fbi
+    reparents its actual worker process to init within about a second of
+    starting (confirmed live: ps showed 50+ simultaneous fbi processes, all
+    but the newest already adopted by init as their parent), so the tracked
+    handle's own .poll() reports it as exited on the very next 3s poll
+    almost every time, whether or not fbi is still actually drawing to the
+    framebuffer. Safe to check system-wide only because this is a
+    dedicated single-purpose device - fbi is never used for anything else
+    here."""
+    return subprocess.run(
+        ["pgrep", "-x", "fbi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+def stop_fbi(proc):
+    """Stops the display process. Terminating proc's own Popen handle is
+    tried first, but the pkill sweep after it is what actually matters -
+    see fbi_is_running's docstring for why that handle stops corresponding
+    to the real running process within about a second of being started.
+    Relying on terminate_process(proc) alone leaked one orphaned fbi
+    process on every single rebuild, without end, until something else
+    stopped the service (confirmed live: 50+ simultaneous instances all
+    fighting over the same framebuffer)."""
+    if proc:
+        try:
+            terminate_process(proc)
+        except Exception:
+            pass
+    subprocess.run(["pkill", "-x", "fbi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.2)
+    if fbi_is_running():
+        subprocess.run(["pkill", "-9", "-x", "fbi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def start_fbi(paths, interval_seconds):
     # fbi inherits stdout/stderr from this process by default, which per the
     # unit file's StandardOutput=tty/TTYPath=/dev/tty1 means anything it
@@ -813,7 +849,7 @@ def main():
                 if display_on:
                     log("Scheduled off period - turning display off")
                     if current_process:
-                        terminate_process(current_process)
+                        stop_fbi(current_process)
                         current_process = None
                     # Forget what was applied so waking triggers a fresh
                     # rebuild rather than assuming the screen still holds it
@@ -930,11 +966,11 @@ def main():
                     meta_fingerprint,
                 )
 
-            process_died = current_process is not None and current_process.poll() is not None
+            process_died = current_process is not None and not fbi_is_running()
 
             if not order:
                 if current_process:
-                    terminate_process(current_process)
+                    stop_fbi(current_process)
                     current_process = None
                     time.sleep(0.15)  # see the matching comment below - same async-restore race
                     blank_framebuffer()
@@ -961,7 +997,7 @@ def main():
 
                 old_process = current_process
                 if old_process:
-                    terminate_process(old_process)
+                    stop_fbi(old_process)
                     # fbi restores whatever was on the framebuffer before it
                     # started when it exits (see blank_framebuffer's
                     # docstring - this is the same quirk that made the boot
@@ -1002,7 +1038,7 @@ def main():
         pass
     finally:
         if current_process:
-            terminate_process(current_process)
+            stop_fbi(current_process)
 
 
 if __name__ == "__main__":
