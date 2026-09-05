@@ -430,20 +430,28 @@ for status_path in /sys/class/drm/card*-HDMI-*/status; do
 done
 log "Using HDMI connector: $HDMI_CONNECTOR"
 
-VIDEO_PARAM="video=${HDMI_CONNECTOR}:${HDMI_RES}@60"
+# 30Hz, not 60: a real 4K@60 signal needs a genuine high-speed/certified
+# HDMI cable (18Gbps), and forcing @60 over a cable that can't actually
+# carry it doesn't fail cleanly - it can produce a corrupted/malformed
+# picture (confirmed live: exactly this, described as a squished/distorted
+# image, on a run with a cable only rated for 4K@30) rather than an obvious
+# "no signal". hdmi_enable_4kp60=1 above stays set regardless - it only
+# raises the *ceiling* the firmware allows, and is harmless at 30Hz. Bump
+# this back up to @60 once/if a proper high-speed cable is confirmed.
+VIDEO_PARAM="video=${HDMI_CONNECTOR}:${HDMI_RES}@30"
 
 if [[ -z "$CMDLINE" ]]; then
     : # Already warned above when locating $CMDLINE for console silencing.
 elif grep -qF "$VIDEO_PARAM" "$CMDLINE"; then
     log "HDMI mode already forced to $HDMI_RES on $HDMI_CONNECTOR ($CMDLINE)"
 else
-    log "Forcing HDMI output to ${HDMI_RES}@60 on $HDMI_CONNECTOR via the kernel command line ($CMDLINE)"
+    log "Forcing HDMI output to ${HDMI_RES}@30 on $HDMI_CONNECTOR via the kernel command line ($CMDLINE)"
     [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
     line="$(cat "$CMDLINE")"
     # Drop any previous video=HDMI-A-N:... token first, for any connector
-    # number - e.g. Display resolution changed, or the display moved to a
-    # different HDMI port, since install.sh last ran - so this never
-    # accumulates stale/conflicting tokens on repeat runs.
+    # number or refresh rate - e.g. Display resolution changed, or the
+    # display moved to a different HDMI port, since install.sh last ran -
+    # so this never accumulates stale/conflicting tokens on repeat runs.
     line="$(echo "$line" | sed -E 's/ ?video=HDMI-A-[0-9]+:[^ ]*//g')"
     line="$line $VIDEO_PARAM"
     echo "$line" | priv tee "$CMDLINE" > /dev/null
