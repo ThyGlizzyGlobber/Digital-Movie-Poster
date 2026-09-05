@@ -138,6 +138,19 @@ settings change causes).
   in `cmdline.txt` is what actually disables it. On a rotated (portrait)
   panel it can show up in a corner other than the top-left the viewer sees,
   since the kernel's own cursor position isn't rotation-aware.
+- **The GPU firmware's rainbow splash is a third, still-earlier thing** -
+  before the kernel/cmdline even runs, so it needs its own `config.txt`
+  flag (`disable_splash=1`), not a cmdline.txt one. Otherwise it flashes
+  before spinner.py's own boot spinner takes over.
+- **HDMI connector naming varies by board.** A Pi Zero W has one HDMI port
+  (`HDMI-A-1`), but a Pi 4 has two independent micro-HDMI ports
+  (`HDMI-A-1`/`HDMI-A-2`) - install.sh's forced `video=` mode detects
+  which one is actually connected (`/sys/class/drm/card*-HDMI-*/status`,
+  same pattern as `find_connected_hdmi_edid()` in app.py) rather than
+  assuming `HDMI-A-1`. Forcing the wrong (disconnected) connector leaves
+  the real one unforced, falling back to raw EDID auto-negotiation - seen
+  live as a squished, landscape-orientation display after the TV was
+  power-cycled independently of the Pi.
 
 ### Display power
 - **`vcgencmd display_power` does nothing under KMS/DRM** and still returns

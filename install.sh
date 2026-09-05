@@ -330,6 +330,32 @@ else
     } | priv tee -a "$CONFIG_TXT" > /dev/null
 fi
 
+# ---------------------------------------------------------------------------
+# Skip the GPU firmware's rainbow splash screen - a separate, earlier-than-
+# anything-Linux boot stage than the console/cursor silencing above, so it
+# needs its own config.txt flag (disable_splash, not a cmdline.txt one).
+# This project draws its own boot spinner/logo (spinner.py) once the OS is
+# up; the stock rainbow splash before that is just unwanted delay and a
+# visual mismatch with the custom one that follows it.
+# ---------------------------------------------------------------------------
+if [[ -z "$CONFIG_TXT" ]]; then
+    : # Already warned above when locating $CONFIG_TXT for hdmi_force_hotplug.
+elif grep -q '^disable_splash=1' "$CONFIG_TXT"; then
+    log "Rainbow boot splash already disabled ($CONFIG_TXT)"
+elif grep -q '^disable_splash=' "$CONFIG_TXT"; then
+    log "Correcting existing disable_splash line ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    priv sed -i 's/^disable_splash=.*/disable_splash=1/' "$CONFIG_TXT"
+else
+    log "Disabling the rainbow boot splash ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    {
+        echo ""
+        echo "# Skip the GPU firmware's rainbow splash - see install.sh"
+        echo "disable_splash=1"
+    } | priv tee -a "$CONFIG_TXT" > /dev/null
+fi
+
 # BASE_DIR travels in via an env var, not interpolated into the Python
 # source string below - a checkout path containing a single quote would
 # otherwise break out of the '$BASE_DIR/config.json' literal and abort the
@@ -355,20 +381,42 @@ w = int(c.get('hdmi_width') or c.get('display_width') or 1920)
 h = int(c.get('hdmi_height') or c.get('display_height') or 1080)
 print(f'{w}x{h}')
 ")"
-VIDEO_PARAM="video=HDMI-A-1:${HDMI_RES}@60"
+# Connector naming varies by board - a Pi 4's two micro-HDMI ports show up
+# as separate HDMI-A-1/HDMI-A-2, and which one the display is actually
+# plugged into isn't something to assume. Mirrors find_connected_hdmi_edid()
+# in app.py exactly, for the same reason: hardcoding HDMI-A-1 (correct for
+# a Pi Zero W's single port, which is what this was originally written
+# against) silently forces a mode on a *disconnected* port the moment a
+# display ends up on the second port of a two-port board instead - the
+# actually-connected port then gets no forced mode at all and falls back
+# to raw EDID auto-negotiation, which is exactly the fragile path this
+# whole mechanism exists to avoid. Confirmed live: exactly this, on a Pi 4
+# with the display on HDMI-A-2 - forcing HDMI-A-1 did nothing useful, and
+# the unforced HDMI-A-2 negotiated a bad mode after the TV was power-cycled.
+HDMI_CONNECTOR="HDMI-A-1"
+for status_path in /sys/class/drm/card*-HDMI-*/status; do
+    if [[ -f "$status_path" && "$(cat "$status_path" 2>/dev/null)" == "connected" ]]; then
+        HDMI_CONNECTOR="$(basename "$(dirname "$status_path")" | sed -E 's/^card[0-9]+-//')"
+        break
+    fi
+done
+log "Using HDMI connector: $HDMI_CONNECTOR"
+
+VIDEO_PARAM="video=${HDMI_CONNECTOR}:${HDMI_RES}@60"
 
 if [[ -z "$CMDLINE" ]]; then
     : # Already warned above when locating $CMDLINE for console silencing.
 elif grep -qF "$VIDEO_PARAM" "$CMDLINE"; then
-    log "HDMI mode already forced to $HDMI_RES ($CMDLINE)"
+    log "HDMI mode already forced to $HDMI_RES on $HDMI_CONNECTOR ($CMDLINE)"
 else
-    log "Forcing HDMI output to ${HDMI_RES}@60 via the kernel command line ($CMDLINE)"
+    log "Forcing HDMI output to ${HDMI_RES}@60 on $HDMI_CONNECTOR via the kernel command line ($CMDLINE)"
     [[ -f "$CMDLINE.orig" ]] || priv cp "$CMDLINE" "$CMDLINE.orig"
     line="$(cat "$CMDLINE")"
-    # Drop any previous video=HDMI-A-1:... token first (e.g. Display
-    # resolution changed since install.sh last ran) so this never
+    # Drop any previous video=HDMI-A-N:... token first, for any connector
+    # number - e.g. Display resolution changed, or the display moved to a
+    # different HDMI port, since install.sh last ran - so this never
     # accumulates stale/conflicting tokens on repeat runs.
-    line="$(echo "$line" | sed -E 's/ ?video=HDMI-A-1:[^ ]*//g')"
+    line="$(echo "$line" | sed -E 's/ ?video=HDMI-A-[0-9]+:[^ ]*//g')"
     line="$line $VIDEO_PARAM"
     echo "$line" | priv tee "$CMDLINE" > /dev/null
 fi
