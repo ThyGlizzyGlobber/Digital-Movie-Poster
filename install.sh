@@ -356,6 +356,34 @@ else
     } | priv tee -a "$CONFIG_TXT" > /dev/null
 fi
 
+# ---------------------------------------------------------------------------
+# A Pi 4's firmware caps HDMI at 4Kp30 on either port unless this is set,
+# regardless of what video= in cmdline.txt requests or what the kernel's own
+# KMS layer believes it negotiated - fbset/the framebuffer size can still
+# report the requested resolution even when the firmware silently capped the
+# actual physical link underneath it, which looks like a software/hardware
+# mismatch (e.g. a squished picture) rather than an obvious failure. Not
+# something a Pi Zero W (this project's original target) has at all, so it
+# was never needed until a Pi 4 forcing a 4K mode entered the picture.
+# ---------------------------------------------------------------------------
+if [[ -z "$CONFIG_TXT" ]]; then
+    : # Already warned above when locating $CONFIG_TXT for hdmi_force_hotplug.
+elif grep -q '^hdmi_enable_4kp60=1' "$CONFIG_TXT"; then
+    log "hdmi_enable_4kp60 already set ($CONFIG_TXT)"
+elif grep -q '^hdmi_enable_4kp60=' "$CONFIG_TXT"; then
+    log "Correcting existing hdmi_enable_4kp60 line ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    priv sed -i 's/^hdmi_enable_4kp60=.*/hdmi_enable_4kp60=1/' "$CONFIG_TXT"
+else
+    log "Enabling real 4Kp60 HDMI output ($CONFIG_TXT)"
+    [[ -f "$CONFIG_TXT.orig" ]] || priv cp "$CONFIG_TXT" "$CONFIG_TXT.orig"
+    {
+        echo ""
+        echo "# Pi 4 firmware caps HDMI at 4Kp30 without this, on either port - see install.sh"
+        echo "hdmi_enable_4kp60=1"
+    } | priv tee -a "$CONFIG_TXT" > /dev/null
+fi
+
 # BASE_DIR travels in via an env var, not interpolated into the Python
 # source string below - a checkout path containing a single quote would
 # otherwise break out of the '$BASE_DIR/config.json' literal and abort the
