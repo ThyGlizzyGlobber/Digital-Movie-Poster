@@ -12,14 +12,69 @@ existing /upload pipeline, so this process stays a lightweight poller.
 """
 import json
 import os
+import re
 import time
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
+import urllib3
 
 APP_BASE = "http://127.0.0.1:5000"
 POSTER_FILENAME = "plex_nowplaying.jpg"
 PLEX_PRODUCT = "Poster Frame"
 PLEX_VERSION = "1.0"
+
+# plex_server_url is a *.plex.direct hostname Plex hands out so a locally-run
+# server can still present a validly-signed TLS cert - the LAN IP is encoded
+# right in the first label (e.g. "192-168-0-133.<hash>.plex.direct" really
+# means 192.168.0.133). That means every request depends on a real DNS
+# lookup even though the traffic never leaves the LAN: a brief outage on the
+# router's resolver (seen in practice - a few minutes at a time, recurring)
+# otherwise stalls Now Playing detection for its whole duration. plex_request
+# falls back to the embedded IP - reachable over plain LAN routing - when DNS
+# resolution specifically is what failed. Cert verification can't succeed
+# against a raw IP, so this fallback path only accepts that tradeoff for
+# requests that would otherwise be failing outright anyway.
+PLEX_DIRECT_RE = re.compile(r"^(\d{1,3}-\d{1,3}-\d{1,3}-\d{1,3})\.[0-9a-f]+\.plex\.direct$")
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _plex_direct_ip(hostname):
+    match = PLEX_DIRECT_RE.match(hostname or "")
+    return match.group(1).replace("-", ".") if match else None
+
+
+def _is_dns_failure(exc):
+    # Match on urllib3's own exception type rather than the OS-level
+    # getaddrinfo message text, which varies by errno and platform
+    # ("Temporary failure in name resolution", "No address associated with
+    # hostname", "nodename nor servname provided", etc.) - requests wraps
+    # urllib3.exceptions.MaxRetryError (whose .reason is the actual
+    # NameResolutionError) as its own ConnectionError, so walk the
+    # cause/context chain to find it.
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, urllib3.exceptions.NameResolutionError):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def plex_request(method, url, **kwargs):
+    try:
+        return requests.request(method, url, **kwargs)
+    except requests.exceptions.ConnectionError as e:
+        if not _is_dns_failure(e):
+            raise
+        parts = urlsplit(url)
+        ip = _plex_direct_ip(parts.hostname)
+        if not ip:
+            raise
+        netloc = f"{ip}:{parts.port}" if parts.port else ip
+        fallback_url = urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+        kwargs["verify"] = False
+        return requests.request(method, fallback_url, **kwargs)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -98,7 +153,7 @@ def fetch_credits(server_url, headers, session, cast_count=4):
         return {}
 
     try:
-        resp = requests.get(f"{server_url}/library/metadata/{rating_key}", headers=headers, timeout=10)
+        resp = plex_request("get", f"{server_url}/library/metadata/{rating_key}", headers=headers, timeout=10)
         resp.raise_for_status()
         items = resp.json().get("MediaContainer", {}).get("Metadata", [])
     except requests.RequestException:
@@ -127,7 +182,7 @@ def fetch_credits(server_url, headers, session, cast_count=4):
 
 
 def find_now_playing(server_url, headers, username):
-    resp = requests.get(f"{server_url}/status/sessions", headers=headers, timeout=10)
+    resp = plex_request("get", f"{server_url}/status/sessions", headers=headers, timeout=10)
     resp.raise_for_status()
     sessions = resp.json().get("MediaContainer", {}).get("Metadata", []) or []
 
@@ -147,7 +202,7 @@ def activate(server_url, headers, session, cast_count=4):
     if not thumb:
         return False
 
-    image_resp = requests.get(f"{server_url}{thumb}", headers=headers, timeout=15)
+    image_resp = plex_request("get", f"{server_url}{thumb}", headers=headers, timeout=15)
     image_resp.raise_for_status()
 
     files = {"poster": (POSTER_FILENAME, image_resp.content, "image/jpeg")}
