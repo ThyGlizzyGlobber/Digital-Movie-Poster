@@ -81,65 +81,107 @@ def save_tracked(tracked):
         json.dump(tracked, f, indent=2)
 
 
-def _extract_json_object(html, start_index):
-    """Bracket-counts from the first '{' at/after start_index to its
-    matching close, string-aware so braces inside quoted values don't
-    throw off the depth count. Used instead of a regex terminator, which
-    isn't reliable against a blob this large and this variable."""
-    i = start_index
-    while html[i] != "{":
-        i += 1
-    obj_start = i
-    depth = 0
-    in_str = False
-    esc = False
-    while i < len(html):
-        c = html[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif c == "\\":
-                esc = True
-            elif c == '"':
-                in_str = False
-        else:
-            if c == '"':
-                in_str = True
-            elif c == "{":
-                depth += 1
-            elif c == "}":
-                depth -= 1
-                if depth == 0:
-                    i += 1
-                    return html[obj_start:i]
-        i += 1
-    raise ValueError("Unbalanced JSON object in page")
+NUXT_DATA_RE = re.compile(r'<script[^>]*id="__NUXT_DATA__"[^>]*>')
+
+
+def _resolve_nuxt_payload(raw_array):
+    """Nuxt 3's __NUXT_DATA__ payload is one flat JSON array: every unique
+    value (string, number, dict, list - even True/False) gets its own slot,
+    and every dict/list *value* elsewhere in the array is an integer index
+    into this same array rather than an inline literal (confirmed live -
+    e.g. a field genuinely valued 12 is stored as its own slot and
+    referenced by index, not written inline). This walks that reference
+    graph back into an ordinary nested Python structure, starting from
+    slot 0 (the root), memoizing since the whole point of the format is
+    heavy value sharing."""
+    memo = {}
+
+    def deref(i):
+        if not isinstance(i, int) or not (0 <= i < len(raw_array)):
+            return i
+        if i in memo:
+            return memo[i]
+        val = raw_array[i]
+        if isinstance(val, list):
+            out = []
+            memo[i] = out
+            out.extend(deref(item) for item in val)
+            return out
+        if isinstance(val, dict):
+            out = {}
+            memo[i] = out
+            out.update((k, deref(v)) for k, v in val.items())
+            return out
+        memo[i] = val
+        return val
+
+    return deref(0)
+
+
+def _unwrap_shallow_reactive(value):
+    """Nuxt wraps several payload sections as ["ShallowReactive", <value>] -
+    a Vue reactivity hint that means nothing once we're just reading data."""
+    if isinstance(value, list) and len(value) == 2 and value[0] == "ShallowReactive":
+        return value[1]
+    return value
 
 
 def fetch_popular_titles():
-    """Returns [{title, year}, ...] in JustWatch's own popularity order."""
+    """Returns [{title, year}, ...] in JustWatch's own popularity order.
+
+    JustWatch rebuilt their frontend on Nuxt/Vue at some point after this
+    was first written - window.__APOLLO_STATE__ is gone, replaced by a
+    <script id="__NUXT_DATA__"> payload (see _resolve_nuxt_payload for its
+    shape). The data underneath is still Apollo Client's normalized
+    GraphQL cache - same Movie:<id> / ROOT_QUERY / content(...) shape as
+    before, just serialized differently. Confirmed live: ROOT_QUERY carries
+    a separate popularTitles(...) field per distinct query variables (the
+    page fires more than one - a small carousel alongside the full grid),
+    so pick the one actually sortBy=POPULAR/objectTypes=[MOVIE] with the
+    highest `first` count rather than assuming there's only one."""
     resp = requests.get(JUSTWATCH_URL, timeout=20, headers={
         "User-Agent": "Mozilla/5.0 (compatible; PosterFrame/1.0; personal use)",
     })
     resp.raise_for_status()
     html = resp.text
 
-    marker = "window.__APOLLO_STATE__="
-    start = html.find(marker)
-    if start == -1:
+    match = NUXT_DATA_RE.search(html)
+    if not match:
+        raise ValueError("JustWatch page did not contain the expected data - their site markup may have changed.")
+    end = html.find("</script>", match.end())
+
+    try:
+        raw_array = json.loads(html[match.end():end])
+        payload = _unwrap_shallow_reactive(_resolve_nuxt_payload(raw_array))
+        apollo_cache = _unwrap_shallow_reactive(payload["data"])["apollo:default"]
+        root_query = apollo_cache["ROOT_QUERY"]
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise ValueError(f"JustWatch page did not contain the expected data - their site markup may have changed ({e}).")
+
+    best_key, best_first = None, -1
+    for key in root_query:
+        if not key.startswith("popularTitles("):
+            continue
+        try:
+            args = json.loads(key[len("popularTitles("):-1])
+        except ValueError:
+            continue
+        if args.get("sortBy") != "POPULAR" or args.get("filter", {}).get("objectTypes") != ["MOVIE"]:
+            continue
+        if args.get("first", 0) > best_first:
+            best_key, best_first = key, args["first"]
+
+    if best_key is None:
         raise ValueError("JustWatch page did not contain the expected data - their site markup may have changed.")
 
-    state = json.loads(_extract_json_object(html, start + len(marker))).get("defaultClient", {})
-    movie_keys = [k for k in state if k.startswith("Movie:")]
-
     titles = []
-    for mk in movie_keys:
-        movie = state[mk]
-        content_key = next((k for k in movie if k.startswith("content(")), None)
-        if not content_key:
+    for edge in root_query[best_key].get("edges", []):
+        ref = (edge.get("node") or {}).get("__ref")
+        movie = apollo_cache.get(ref) if ref else None
+        if not movie:
             continue
-        content_ref = movie[content_key]
-        content = state.get((content_ref or {}).get("id"))
+        content_key = next((k for k in movie if k.startswith("content(")), None)
+        content = movie.get(content_key) if content_key else None
         if not content or not content.get("title"):
             continue
         titles.append({"title": content["title"], "year": content.get("originalReleaseYear")})
