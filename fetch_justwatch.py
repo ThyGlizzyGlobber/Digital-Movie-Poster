@@ -35,6 +35,7 @@ coordinate to avoid the two fighting over the rotation.
 import json
 import os
 import re
+import sys
 from datetime import date, datetime, timedelta
 
 import requests
@@ -305,7 +306,12 @@ def main():
         candidates = fetch_popular_titles()
     except (requests.RequestException, ValueError) as e:
         log(f"Failed to fetch JustWatch's popular list: {e}")
-        return
+        # Non-zero so fetch_discovery.py retries later today rather than
+        # writing the whole day off. The scheduled slot is only reached
+        # once a day, so a passing DNS/network blip at exactly 04:00 used
+        # to cost a full day's sync - and on a flaky connection, day after
+        # day of them.
+        return 1
 
     this_year_titles = [c for c in candidates if c.get("year") == this_year]
     log(f"JustWatch: {len(candidates)} popular title(s) fetched, "
@@ -406,4 +412,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Non-zero exit means "transient failure, worth retrying" - it's the
+    # only signal fetch_discovery.py has to tell a lost sync apart from a
+    # deliberate no-op. Skipping because the source is disabled or isn't
+    # the active one, and a run that simply resolved nothing new, all
+    # stay 0.
+    sys.exit(main() or 0)

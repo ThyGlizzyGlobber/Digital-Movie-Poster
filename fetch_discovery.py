@@ -13,6 +13,12 @@ jittering) self-heals on the very next tick instead of silently waiting
 until tomorrow - no dependency on systemd's own Persistent= catch-up
 semantics for this.
 
+A run that *fails* self-heals the same way: only a successful sync marks
+the day as done, so a transient DNS/network blip at exactly the scheduled
+minute gets retried later the same day (throttled by RETRY_AFTER) instead
+of costing a full day's worth of poster updates. On a flaky connection
+that was the difference between syncing daily and not syncing for a week.
+
 Manual "Sync now" clicks bypass this file entirely and call
 fetch_posters.py / fetch_justwatch.py directly, since each already checks
 config["discovery_source"] itself and no-ops if it isn't the active one.
@@ -21,11 +27,17 @@ import json
 import os
 import subprocess
 import sys
-from datetime import date, datetime, time as dtime
+from datetime import datetime, time as dtime, timedelta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 STAMP_PATH = os.path.join(BASE_DIR, ".last_scheduled_sync")
+
+# How long to leave a failed (or interrupted) run alone before re-attempting
+# it. The timer itself ticks every 5 minutes, which is far too eager to keep
+# hammering someone else's site with if the failure turns out to be
+# persistent rather than a passing blip.
+RETRY_AFTER = timedelta(minutes=30)
 
 
 def load_config():
@@ -64,29 +76,53 @@ def parse_target_time(value):
         return dtime(4, 0)
 
 
-def already_ran_today():
+def read_stamp():
+    """Returns (when, succeeded) for the last scheduled run, or (None, False)
+    if there's no readable stamp.
+
+    Format is "<ISO timestamp> <ok|pending>". Installs predating the
+    pending/ok distinction wrote a bare "YYYY-MM-DD" when *starting* a run -
+    datetime.fromisoformat still parses that (as midnight) and the absent
+    status reads as success, so updating mid-day doesn't kick off a
+    surprise second sync on the day the change lands."""
     try:
         with open(STAMP_PATH) as f:
-            return f.read().strip() == date.today().isoformat()
-    except FileNotFoundError:
-        return False
+            when, _, status = f.read().strip().partition(" ")
+        return datetime.fromisoformat(when), status.strip() != "pending"
+    except (FileNotFoundError, ValueError):
+        return None, False
 
 
-def mark_ran_today():
+def write_stamp(succeeded):
     try:
         with open(STAMP_PATH, "w") as f:
-            f.write(date.today().isoformat())
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} "
+                    f"{'ok' if succeeded else 'pending'}")
     except OSError:
         pass
+
+
+def due_for_sync(now):
+    when, succeeded = read_stamp()
+    if when is None:
+        return True
+    if succeeded:
+        return when.date() < now.date()
+    # "pending" means the last attempt either failed outright or never got
+    # to report back (killed mid-run, power cut). Both are retryable, just
+    # not instantly - and since the stamp is written before the child
+    # starts, this doubles as the guard against two runs overlapping.
+    return now - when >= RETRY_AFTER
 
 
 def main():
     config = load_config()
     target = parse_target_time(config.get("discovery_sync_time", "04:00"))
 
-    if datetime.now().time() < target:
+    now = datetime.now()
+    if now.time() < target:
         return 0
-    if already_ran_today():
+    if not due_for_sync(now):
         return 0
 
     source = active_source(config)
@@ -98,11 +134,13 @@ def main():
         # still gets a same-day sync instead of waiting until tomorrow.
         return 0
 
-    # Marked before running, not after: a sync can take a while (image
+    # Stamped before running, not after: a sync can take a while (image
     # downloads, TMDb lookups), and this file is checked again every 5
     # minutes - without this, a slow run risks a second overlapping
-    # invocation starting before the first one finishes.
-    mark_ran_today()
+    # invocation starting before the first one finishes. It's only promoted
+    # to "ok" once the child reports success, so a failed run leaves
+    # "pending" behind for RETRY_AFTER to pick up again later the same day.
+    write_stamp(False)
 
     script = "fetch_justwatch.py" if source == "justwatch" else "fetch_posters.py"
     log_path = os.path.join(BASE_DIR, f"{source}_sync.log")
@@ -114,10 +152,13 @@ def main():
     # TMDb/JustWatch sources only ever showed the last *manual* sync and
     # scheduled runs - the ones actually being asked about - were invisible.
     with open(log_path, "w") as log_file:
-        return subprocess.call(
+        status = subprocess.call(
             [sys.executable, os.path.join(BASE_DIR, script)],
             stdout=log_file, stderr=subprocess.STDOUT,
         )
+
+    write_stamp(status == 0)
+    return status
 
 
 if __name__ == "__main__":
