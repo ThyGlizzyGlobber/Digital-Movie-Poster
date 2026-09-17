@@ -211,6 +211,29 @@ log "Disabling getty on tty1"
 priv systemctl disable --now getty@tty1.service 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
+# Wifi power saving off. The Pi's brcmfmac chip drops its association with
+# it on - seen live as ~750 lease losses in 12h on a weak signal, each one
+# taking DNS down with it (JustWatch/TMDb/Plex all failing on "Temporary
+# failure in name resolution"). A NetworkManager connection *default*
+# rather than a per-profile setting, so it also covers any network joined
+# later, not just whichever one exists at install time. Takes effect the
+# next time a connection is activated (join, reconnect, reboot) - reloading
+# NM's config here deliberately doesn't bounce the live link, since that
+# would cut off an SSH session running this.
+# ---------------------------------------------------------------------------
+NM_POWERSAVE_CONF=/etc/NetworkManager/conf.d/99-posterframe-wifi-powersave.conf
+NM_POWERSAVE_BODY=$'[connection]\n# 2 = disable\nwifi.powersave = 2'
+if [[ ! -d /etc/NetworkManager/conf.d ]]; then
+    log "NetworkManager not present - skipping wifi power-save setting"
+elif [[ "$(cat "$NM_POWERSAVE_CONF" 2>/dev/null)" == "$NM_POWERSAVE_BODY" ]]; then
+    log "Wifi power saving already disabled ($NM_POWERSAVE_CONF)"
+else
+    log "Disabling wifi power saving ($NM_POWERSAVE_CONF)"
+    printf '%s\n' "$NM_POWERSAVE_BODY" | priv tee "$NM_POWERSAVE_CONF" > /dev/null
+    priv systemctl reload NetworkManager 2>/dev/null || true
+fi
+
+# ---------------------------------------------------------------------------
 # Silence the kernel/boot console so log text doesn't draw over the spinner
 # or the slideshow. Idempotent: only touched if the flags aren't already
 # there, and a one-time .orig backup is kept.

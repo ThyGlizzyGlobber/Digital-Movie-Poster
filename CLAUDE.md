@@ -152,6 +152,18 @@ settings change causes).
   live as a squished, landscape-orientation display after the TV was
   power-cycled independently of the Pi.
 
+### Network
+- **Wifi power saving must be off.** With it on, the Pi's brcmfmac chip
+  kept dropping its association on a weak signal (~750 lease losses in 12h),
+  and every drop surfaced as `Temporary failure in name resolution` in the
+  JustWatch/TMDb/Plex logs - it looks like a DNS or code bug but isn't.
+  install.sh sets it as a NetworkManager connection default
+  (`/etc/NetworkManager/conf.d/99-posterframe-wifi-powersave.conf`), so it
+  applies to any network, from the next connection activation on.
+- **Outbound DNS to public resolvers (e.g. 1.1.1.1) is blocked on the
+  production network** - only the router (192.168.0.1) answers, so "just
+  use a different DNS server" isn't a workaround there.
+
 ### Display power
 - **`vcgencmd display_power` does nothing under KMS/DRM** and still returns
   success, so its exit code is worthless. The overnight schedule therefore only
