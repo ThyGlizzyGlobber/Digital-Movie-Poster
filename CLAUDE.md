@@ -198,6 +198,29 @@ settings change causes).
   posters.
 
 ### Web UI
+- **The UI is styled as a sibling of Obsidian**, the household's Plex
+  request app (`../../Movie Automation Downloading System/frontend`,
+  read-only reference - never edit that folder from here). Its
+  `src/styles/tokens.css` and `features/settings/SettingsPage.css` are
+  the source of every token and component recipe in `templates/index.html`:
+  blue-black ground (`#050508`, never pure black), ambient blurred glow,
+  glass surfaces with backdrop blur, pills and 24px card radii, Outfit at
+  light weights for display, Manrope for UI, IBM Plex Mono for technical
+  strings, white primary buttons. **Dark is the only theme** - there is no
+  light mode and no toggle, by design. `--accent` (System tab) still comes
+  from `accent_color`, defaulting to Obsidian's ice `#9cc0ff`; it only
+  tints toggles, focus rings, the nav count and progress - never buttons.
+  The brand mark is Obsidian's shard (`static/brand-icon.svg`, inline in
+  the top bar) next to a "Poster Frame" wordmark.
+- **Six tabs, flat nav: Posters, Discovery, Display, Schedule, Plex,
+  System.** Boot screen lives on Display; live logs are a collapsible
+  section on System (polled only while expanded *and* the tab is
+  active); stored poster width sits in Display's "Advanced - resolution
+  and quality". The active tab is the URL hash (`#display`), so links
+  into a tab work. Rows with `data-depends="<checkbox name>"` dim while
+  that toggle is off but stay editable. Action forms carry
+  `data-toast="Title|subtitle"` - the toast is stashed in sessionStorage
+  on submit and shown by the next page load, since those routes redirect.
 - All settings inputs live in one `<form id="settingsForm">` via the HTML5
   `form="settingsForm"` attribute (avoids illegal nested forms). One floating
   save button submits every tab at once. **Action** forms (upload, sync, purge,

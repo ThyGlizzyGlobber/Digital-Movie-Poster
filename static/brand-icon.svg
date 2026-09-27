@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 1150 1550" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <g transform="matrix(1,0,0,1,-425,-225)">
+        <g transform="matrix(1.006124,0,0,0.860155,-43.853893,151.026637)">
+            <g>
+                <path d="M553,1239L680,1259L899,1775L860,1798L553,1239Z" style="fill:rgb(28,34,112);"/>
+                <path d="M1245,1756L1263,1771L1438,1482L1385,1450L1245,1756Z" style="fill:rgb(28,34,112);"/>
+                <path d="M1555,1098L1584,1055L1609,1115L1558,1281L1517,1346L1457,1301L1555,1098Z" style="fill:rgb(28,34,112);"/>
+                <path d="M483,1067L742,1276L1109,1375L1517,1346L1457,1301L667,1075L519,1048L483,1067Z" style="fill:rgb(28,34,112);"/>
+                <path d="M528,706L615,772L764,724L819,728L1488,934L1433,728L897,562L528,706Z" style="fill:rgb(28,34,112);"/>
+            </g>
+            <g>
+                <path d="M1065,324L1125,324L1433,728L1188,251L1074,86L1026,86L1065,324Z" style="fill:rgb(45,57,178);"/>
+                <path d="M1534,949L1488,934L1555,1098L1584,1055L1534,949Z" style="fill:rgb(45,57,178);"/>
+                <path d="M819,728L764,724L519,1048L667,1075L819,728Z" style="fill:rgb(45,57,178);"/>
+                <path d="M969,1888L1023,1888L1263,1771L1245,1756L899,1775L860,1798L969,1888Z" style="fill:rgb(45,57,178);"/>
+            </g>
+            <g>
+                <path d="M519,1048L483,1067L466,1003L466,986L497,810L764,724L519,1048Z" style="fill:rgb(156,192,255);"/>
+                <path d="M897,562L528,706L799,288L1026,86L1065,324L897,562Z" style="fill:rgb(156,192,255);"/>
+            </g>
+            <g>
+                <path d="M897,562L1065,324L1125,324L1433,728L897,562Z" style="fill:rgb(54,68,214);"/>
+                <path d="M667,1075L819,728L1488,934L1555,1098L1457,1301L667,1075Z" style="fill:rgb(54,68,214);"/>
+                <path d="M680,1259L899,1775L1245,1756L1385,1450L680,1259Z" style="fill:rgb(54,68,214);"/>
+            </g>
+        </g>
+    </g>
+</svg>
