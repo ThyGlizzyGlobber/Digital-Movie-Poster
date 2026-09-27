@@ -212,8 +212,12 @@ settings change causes).
   tints toggles, focus rings, the nav count and progress - never buttons.
   The brand mark is Obsidian's shard (`static/brand-icon.svg`, inline in
   the top bar) next to a "Poster Frame" wordmark.
-- **Six tabs, flat nav: Posters, Discovery, Display, Schedule, Plex,
-  System.** Boot screen lives on Display; live logs are a collapsible
+- **Six tabs: Posters, Discovery, Display, Schedule, Plex, System.**
+  The nav is a segmented pill inside the floating top bar on desktop and
+  a floating bottom tab bar on phones (Obsidian's Topbar/Tabbar), so
+  there is no side column: the Posters grid runs edge to edge
+  (`--edge-inset`, cards sized by `--poster-w`) while the settings tabs
+  stay a centred 980px column (`.tab-panel.narrow`). Boot screen lives on Display; live logs are a collapsible
   section on System (polled only while expanded *and* the tab is
   active); stored poster width sits in Display's "Advanced - resolution
   and quality". The active tab is the URL hash (`#display`), so links

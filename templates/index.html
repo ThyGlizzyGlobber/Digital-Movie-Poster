@@ -70,6 +70,12 @@
     --edge-inset:64px;
     --nav-side:max(var(--edge-inset), calc(50% - 590px));
     --topbar-h:88px;
+    /* Poster card width: continuous with the viewport, like Obsidian's
+       --poster-w, but a touch larger - here the posters are the page. */
+    --poster-w:clamp(150px, 13vw, 240px);
+    /* Phone tab bar, mirrored from Obsidian's Tabbar.css. */
+    --tabbar-h:66px;
+    --tabbar-bottom:max(14px, calc(env(safe-area-inset-bottom, 0px) - 12px));
   }
 
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -114,28 +120,34 @@
   .live.off{color:var(--text-dim)}
   .live.off b{box-shadow:none;opacity:.6}
 
-  /* ---------- Shell: nav column + panel column ---------- */
-  main{position:relative;z-index:1;padding:calc(var(--topbar-h) + 22px) var(--nav-side) 140px}
-  .shell{display:flex;align-items:flex-start;gap:28px}
-  .nav-col{flex:0 0 240px;position:sticky;top:calc(var(--topbar-h) + 22px)}
-  .nav-list{display:flex;flex-direction:column;gap:2px;padding:10px;border-radius:var(--radius-lg);
-    background:var(--glass);border:1px solid var(--glass-border);box-shadow:var(--glass-highlight)}
-  .nav-item{display:flex;align-items:center;gap:12px;width:100%;padding:12px 14px;border-radius:var(--radius-md);
-    background:none;border:none;color:var(--text-dim);font-size:14px;font-weight:700;text-align:left;
-    transition:background .15s ease,color .15s ease}
-  .nav-item .icon{font-size:18px}
-  .nav-item:hover{color:var(--text);background:var(--glass)}
-  .nav-item:active{background:var(--glass-strong)}
-  .nav-item.active{background:rgba(255,255,255,.1);color:var(--text);box-shadow:var(--glass-highlight)}
-  .navcount{margin-left:auto;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;
-    border-radius:var(--radius-pill);background:var(--glass-strong);color:var(--text-dim);font-size:11px;font-weight:800;line-height:1}
-  .nav-item.active .navcount{background:var(--accent);color:var(--accent-text)}
-  .nav-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 12px 2px;
-    font-size:11px;font-weight:700;color:var(--text-dim)}
-  .nav-foot .mono{font-family:var(--font-mono);font-weight:500;letter-spacing:.02em}
-  .panel-col{flex:1 1 auto;min-width:0}
+  /* ---------- Page: full-bleed content, nav in the top bar ----------
+     Like Obsidian's browse pages, the poster grid runs edge to edge (only
+     --edge-inset from the viewport), so the posters are the page. The
+     settings tabs are reading material and stay a comfortable 980px
+     column, centred under the top bar pill. */
+  main{position:relative;z-index:1;padding:calc(var(--topbar-h) + 26px) var(--edge-inset) 140px}
   .tab-panel{display:none}
   .tab-panel.active{display:block;animation:panel-in .22s ease}
+  .tab-panel.narrow{max-width:980px;margin:0 auto}
+  .brand{margin-right:18px}
+  /* Desktop nav: the segmented pill of links inside the top bar (Obsidian's
+     .top-nav-links). Text only up here; the icons come back on the phone
+     tab bar. */
+  #tabNav{display:flex;align-items:center;gap:2px;flex:0 0 auto;margin-left:4px;padding:4px;border-radius:var(--radius-pill);background:rgba(255,255,255,.04)}
+  .nav-item{position:relative;display:inline-flex;align-items:center;gap:8px;padding:9px 18px;border-radius:var(--radius-pill);
+    background:none;border:none;color:var(--text-dim);font-size:14px;font-weight:700;white-space:nowrap;
+    transition:background .15s ease,color .15s ease}
+  .nav-item .icon{display:none}
+  .nav-item:hover{color:var(--text)}
+  .nav-item.active{color:var(--text);background:rgba(255,255,255,.13);box-shadow:var(--glass-highlight)}
+  .navcount{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;
+    border-radius:var(--radius-pill);background:var(--glass-strong);color:var(--text-dim);font-size:11px;font-weight:800;line-height:1}
+  .nav-item.active .navcount{background:var(--accent);color:var(--accent-text)}
+  @media (max-width:1180px){
+    .nav-item{padding:9px 13px;font-size:13px}
+    .top-chip.version{display:none}
+    .brand{margin-right:10px}
+  }
   @keyframes panel-in{from{opacity:0;transform:translateY(6px)}}
 
   /* Page heading: Outfit 300 title and a one-line lead, per tab. */
@@ -262,7 +274,8 @@
   .btn-row form{display:contents}
 
   /* ---------- Stat tiles (the ones that lead somewhere are buttons) ---------- */
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:20px}
+  .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:26px;max-width:1180px}
+  @media (max-width:1100px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
   .stat{display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:20px;background:var(--glass);
     border:1px solid var(--glass-border);box-shadow:var(--glass-highlight);min-width:0;
     color:inherit;font-family:inherit;text-align:left;transition:background .15s ease}
@@ -346,12 +359,12 @@
   details.advanced .advanced-body section.panel h2{font-size:18px}
 
   /* ---------- Poster grid + list ---------- */
-  .toolrow{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:16px;flex-wrap:wrap}
+  .toolrow{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:24px;flex-wrap:wrap}
   .toolrow .chips{flex:1 1 auto}
   .headctrls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .filter-hint{font-size:12.5px;font-weight:600;color:var(--status-nomatch);margin:0 0 14px}
 
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:20px 16px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--poster-w),1fr));gap:30px 22px}
   .grid.hidden{display:none}
   .card{position:relative;min-width:0}
   .poster-art{position:relative;border-radius:18px;overflow:hidden;background:var(--bg-card);box-shadow:var(--shadow-card)}
@@ -375,7 +388,7 @@
   @media (hover:none){.card .grip{opacity:1}}
   .caption{display:flex;align-items:flex-start;gap:8px;margin-top:12px;min-width:0}
   .caption > div{flex:1 1 auto;min-width:0}
-  .caption .ttl{display:block;font-family:var(--font-display);font-weight:400;font-size:15px;line-height:19px;letter-spacing:-.01em;
+  .caption .ttl{display:block;font-family:var(--font-display);font-weight:400;font-size:16px;line-height:20px;letter-spacing:-.01em;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .caption small{display:block;color:var(--text-dim);font-size:12px;line-height:16px;font-weight:600;margin-top:3px;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -395,7 +408,7 @@
      draggable (no rotation order here) and with a Pin action instead of
      delete. discovery-card.added dims the poster once it's already in the
      rotation, so a re-click isn't offered as if it would do something new. */
-  .discovery-grid{min-height:40px;grid-template-columns:repeat(auto-fill,minmax(136px,1fr))}
+  .discovery-grid{min-height:40px;grid-template-columns:repeat(auto-fill,minmax(136px,1fr));gap:20px 16px}
   .card.discovery-card.added .poster-art{opacity:.45}
   .card.discovery-card .caption{flex-direction:column;gap:8px}
   .card.discovery-card .pin-btn{align-self:flex-start}
@@ -478,15 +491,17 @@
     .brand-wordmark{font-size:22px}
     .top-chip{height:32px;padding:0 12px}
     .top-chip.version{display:none}
-    main{padding-top:calc(var(--topbar-h) + 14px);padding-bottom:110px}
-    .shell{flex-direction:column;gap:16px}
-    .nav-col{flex:none;width:100%;position:sticky;top:calc(var(--topbar-h) + 8px);z-index:5}
-    .nav-list{flex-direction:row;gap:4px;padding:6px;overflow-x:auto;scrollbar-width:none;border-radius:var(--radius-pill);
-      background:var(--glass-overlay);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur)}
-    .nav-list::-webkit-scrollbar{display:none}
-    .nav-item{width:auto;padding:9px 14px;border-radius:var(--radius-pill);white-space:nowrap;font-size:13px}
-    .nav-item .icon{font-size:16px}
-    .nav-foot{display:none}
+    main{padding-top:calc(var(--topbar-h) + 14px);padding-bottom:calc(var(--tabbar-bottom) + var(--tabbar-h) + 96px)}
+    /* Phone: the nav becomes a floating bottom tab bar (Obsidian's), icons
+       with a small label; the save pill and toasts sit above it. */
+    #tabNav{position:fixed;left:14px;right:14px;bottom:var(--tabbar-bottom);z-index:20;margin:0;gap:2px;padding:6px;
+      background:var(--glass-overlay);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+      border:1px solid var(--glass-border);box-shadow:var(--shadow-float),var(--glass-highlight)}
+    .nav-item{flex:1 1 0;min-width:0;flex-direction:column;justify-content:center;gap:3px;height:52px;padding:0 2px;
+      font-size:10px;font-weight:700;border-radius:var(--radius-pill)}
+    .nav-item .icon{display:block;font-size:20px}
+    .nav-item.active{background:rgba(255,255,255,.14)}
+    .navcount{display:none}
     .title{font-size:clamp(34px,9vw,44px)}
     section.panel{padding:20px 18px;border-radius:20px}
     .panel h2{flex-wrap:wrap}
@@ -509,9 +524,9 @@
     .discovery-grid{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}
     .toolrow{flex-direction:column;align-items:stretch}
     .headctrls{justify-content:flex-start}
-    .savebar{left:16px;right:16px;bottom:16px;justify-content:space-between}
+    .savebar{left:16px;right:16px;bottom:calc(var(--tabbar-bottom) + var(--tabbar-h) + 12px);justify-content:space-between}
     .savebar kbd{display:none}
-    .toast-stack{right:16px;left:16px;width:auto;bottom:84px}
+    .toast-stack{right:16px;left:16px;width:auto;bottom:calc(var(--tabbar-bottom) + var(--tabbar-h) + 84px)}
     .log-view{height:60vh}
   }
   @media (prefers-reduced-motion:reduce){
@@ -568,6 +583,14 @@
     <svg class="brand-mark" viewBox="0 0 1150 1550" aria-hidden="true"><g transform="matrix(1,0,0,1,-425,-225)"><g transform="matrix(1.006124,0,0,0.860155,-43.853893,151.026637)"><g fill="#1c2270"><path d="M553,1239L680,1259L899,1775L860,1798L553,1239Z"/><path d="M1245,1756L1263,1771L1438,1482L1385,1450L1245,1756Z"/><path d="M1555,1098L1584,1055L1609,1115L1558,1281L1517,1346L1457,1301L1555,1098Z"/><path d="M483,1067L742,1276L1109,1375L1517,1346L1457,1301L667,1075L519,1048L483,1067Z"/><path d="M528,706L615,772L764,724L819,728L1488,934L1433,728L897,562L528,706Z"/></g><g fill="#2d39b2"><path d="M1065,324L1125,324L1433,728L1188,251L1074,86L1026,86L1065,324Z"/><path d="M1534,949L1488,934L1555,1098L1584,1055L1534,949Z"/><path d="M819,728L764,724L519,1048L667,1075L819,728Z"/><path d="M969,1888L1023,1888L1263,1771L1245,1756L899,1775L860,1798L969,1888Z"/></g><g fill="#9cc0ff"><path d="M519,1048L483,1067L466,1003L466,986L497,810L764,724L519,1048Z"/><path d="M897,562L528,706L799,288L1026,86L1065,324L897,562Z"/></g><g fill="#3644d6"><path d="M897,562L1065,324L1125,324L1433,728L897,562Z"/><path d="M667,1075L819,728L1488,934L1555,1098L1457,1301L667,1075Z"/><path d="M680,1259L899,1775L1245,1756L1385,1450L680,1259Z"/></g></g></g></svg>
     <span class="brand-wordmark">Poster Frame</span>
   </a>
+  <nav id="tabNav" aria-label="Sections">
+      <button type="button" class="nav-item active" data-tab="posters"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-grid"/></svg>Posters<span class="navcount">{{ posters|length }}</span></button>
+    <button type="button" class="nav-item" data-tab="discovery"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-search"/></svg>Discovery</button>
+    <button type="button" class="nav-item" data-tab="display"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tv"/></svg>Display</button>
+    <button type="button" class="nav-item" data-tab="schedule"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-clock"/></svg>Schedule</button>
+    <button type="button" class="nav-item" data-tab="plex"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-plex"/></svg>Plex</button>
+    <button type="button" class="nav-item" data-tab="system"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg>System</button>
+  </nav>
   <div class="top-right">
     <button type="button" class="top-chip mono version" data-goto="system" title="Running version - open System">{% if git_version %}v{{ git_version }}{% else %}{{ git_sha or 'unknown' }}{% endif %}</button>
     <button type="button" class="top-chip" data-goto="plex" title="Open Plex">
@@ -577,23 +600,6 @@
 </header>
 
 <main>
-<div class="shell">
-  <aside class="nav-col">
-    <nav class="nav-list" id="tabNav" aria-label="Sections">
-      <button type="button" class="nav-item active" data-tab="posters"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-grid"/></svg>Posters<span class="navcount">{{ posters|length }}</span></button>
-      <button type="button" class="nav-item" data-tab="discovery"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-search"/></svg>Discovery</button>
-      <button type="button" class="nav-item" data-tab="display"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-tv"/></svg>Display</button>
-      <button type="button" class="nav-item" data-tab="schedule"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-clock"/></svg>Schedule</button>
-      <button type="button" class="nav-item" data-tab="plex"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-plex"/></svg>Plex</button>
-      <button type="button" class="nav-item" data-tab="system"><svg class="icon" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg>System</button>
-    </nav>
-    <div class="nav-foot">
-      <span class="live"><b></b>Web UI</span>
-      <span class="mono">{% if git_version %}v{{ git_version }}{% else %}{{ git_sha or 'unknown' }}{% endif %}</span>
-    </div>
-  </aside>
-
-  <div class="panel-col">
 
       {% if reprocess_failed %}
       <div class="flash warn">
@@ -723,7 +729,7 @@
       </div>
 
       <!-- DISCOVERY -->
-      <div class="tab-panel" data-panel="discovery">
+      <div class="tab-panel narrow" data-panel="discovery">
         <div class="heading">
           <h1 class="title">Discovery</h1>
           <p class="lead">Where new posters come from, and when old ones leave</p>
@@ -848,7 +854,7 @@
       </div>
 
       <!-- DISPLAY -->
-      <div class="tab-panel" data-panel="display">
+      <div class="tab-panel narrow" data-panel="display">
         <div class="heading">
           <h1 class="title">Display</h1>
           <p class="lead">How each poster looks on the wall</p>
@@ -1242,7 +1248,7 @@
       </div>
 
       <!-- SCHEDULE -->
-      <div class="tab-panel" data-panel="schedule">
+      <div class="tab-panel narrow" data-panel="schedule">
         <div class="heading">
           <h1 class="title">Schedule</h1>
           <p class="lead">When the frame sleeps, wakes and refreshes</p>
@@ -1305,7 +1311,7 @@
       </div>
 
       <!-- PLEX -->
-      <div class="tab-panel" data-panel="plex">
+      <div class="tab-panel narrow" data-panel="plex">
         <div class="heading">
           <h1 class="title">Plex</h1>
           <p class="lead">Show what you're watching instead of the normal rotation</p>
@@ -1422,7 +1428,7 @@
       </div>
 
       <!-- SYSTEM -->
-      <div class="tab-panel" data-panel="system">
+      <div class="tab-panel narrow" data-panel="system">
         <div class="heading">
           <h1 class="title">System</h1>
           <p class="lead">Updates, power, logs and the look of this page</p>
@@ -1521,8 +1527,6 @@
         </details>
       </div>
 
-  </div>
-</div>
 </main>
 
 <div class="toast-stack" id="toastStack" aria-live="polite"></div>
@@ -1606,8 +1610,6 @@
 
   function goTo(name){
     if(!activateTab(name)) return;
-    const b = tabNav.querySelector('button[data-tab="' + name + '"]');
-    if(b && b.scrollIntoView) b.scrollIntoView({block:'nearest', inline:'center'});
     window.scrollTo({top:0, behavior:'smooth'});
   }
 
